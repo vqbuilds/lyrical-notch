@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.3
+
+- Rename the app and project to Lyrical Notch, including windows, executable, build artifacts and documentation.
+- Preserve the existing bundle identifier and lyric storage so settings, timing offsets and saved lyrics remain available.
+- Show the installed app version in Settings.
+
 ## 0.5.2
 
 - Re-anchor playback after system, screen and session wake; freeze karaoke until a fresh player position arrives.

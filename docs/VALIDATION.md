@@ -1,4 +1,10 @@
-# Validación 0.5.2
+# Validación 0.5.3
+
+## Revisión 0.5.3 · 20 de octubre de 2026
+
+- Cambio de nombre a Lyrical Notch: interfaz, ejecutable, proyecto Swift y paquetes de distribución.
+- Identidad de preferencias y carpeta de letras heredadas conservadas para mantener ajustes y selecciones.
+- App instalada y comprobada: ventana «Lyrical Notch · Ajustes», versión 0.5.3, inicio automático activo y ajustes de anchura/color conservados. El resumen SHA-256 de las preferencias coincide antes y después del cambio.
 
 ## Revisión 0.5.2 · 20 de octubre de 2026
 

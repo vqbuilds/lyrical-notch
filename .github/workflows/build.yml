@@ -16,7 +16,7 @@ jobs:
         run: ./scripts/package-source.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: Notch-Letras-local-build
+          name: Lyrical-Notch-local-build
           path: |
-            dist/Notch-Letras-*-macos.zip
-            dist/notch-letras-*-source.tar.gz
+            dist/Lyrical-Notch-*-macos.zip
+            dist/lyrical-notch-*-source.tar.gz

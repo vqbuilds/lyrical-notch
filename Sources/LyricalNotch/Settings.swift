@@ -19,7 +19,7 @@ struct SettingsView: View {
             }
             .navigationSplitViewColumnWidth(min: 165, ideal: 185, max: 215)
             .safeAreaInset(edge: .top) {
-                HStack { Image(systemName: "waveform").foregroundStyle(model.tint); Text("Notch Letras").font(.headline); Spacer() }.padding(16)
+                HStack { Image(systemName: "waveform").foregroundStyle(model.tint); Text("Lyrical Notch").font(.headline); Spacer() }.padding(16)
             }
         } detail: {
             VStack(alignment: .leading, spacing: 0) {
@@ -137,7 +137,7 @@ struct SettingsView: View {
             Text("Las búsquedas envían título, artista y duración a NetEase, QQ Music, Kugou, lrc.red y LRCLIB; el ID de Spotify se consulta en el repositorio público AMLL. Las letras se guardan en este Mac. Spotify facilita la URL de la carátula, que se descarga de su proveedor de imágenes.").font(.callout).fixedSize(horizontal: false, vertical: true)
         }
         Section {
-            Text("Notch Letras · 0.4").foregroundStyle(.secondary)
+            Text("Lyrical Notch · \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")").foregroundStyle(.secondary)
             Text("Para cerrar la app, usa el icono de onda en la barra de menús → Salir.").font(.caption).foregroundStyle(.secondary)
         }
     }

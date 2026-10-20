@@ -1,4 +1,4 @@
-# Notch Letras
+# Lyrical Notch
 
 Una app nativa de macOS que lleva las letras y controles de Spotify o Música al notch. Código propio en Swift y SwiftUI, independiente de Dynamic Lyrics.
 
@@ -27,7 +27,7 @@ Para compilar necesitas Swift 6 o posterior y las herramientas de desarrollo de 
 ./build.sh
 ```
 
-La app se genera en `build/Notch Letras.app`. Copia la app a una carpeta estable, como `~/Applications`, antes de activar «Abrir al iniciar sesión». Abre la app y acepta el acceso de Automatización al reproductor. El icono de onda de la barra de menús permite abrir Ajustes, elegir letras y salir. Cerrar una ventana no cierra la app.
+La app se genera en `build/Lyrical Notch.app`. Copia la app a una carpeta estable, como `~/Applications`, antes de activar «Abrir al iniciar sesión». Abre la app y acepta el acceso de Automatización al reproductor. El icono de onda de la barra de menús permite abrir Ajustes, elegir letras y salir. Cerrar una ventana no cierra la app.
 
 La compilación usa una firma local ad hoc. No es una distribución notarizada y no incluye un certificado Developer ID; la distribución pública firmada debe prepararse por separado. Tras recompilar, macOS puede pedir de nuevo permiso de Automatización. El inicio automático usa el registro de macOS y muestra su estado real, incluido cualquier error o aprobación pendiente.
 
@@ -43,7 +43,7 @@ En Ajustes → Letras y karaoke puedes corregir la sincronía de la canción o e
 
 Se consultan NetEase, QQ Music, Kugou, lrc.red y LRCLIB con título, artista y duración; AMLL se consulta por ID de Spotify. Spotify facilita la URL HTTPS de la carátula. La selección automática valida identidad y duración donde se proporcionan. Los proveedores no garantizan cobertura de todas las canciones; NetEase, QQ Music y Kugou usan interfaces no oficiales. La selección manual es explícita y puede corresponder a una versión distinta.
 
-Las letras se guardan solo en `~/Library/Application Support/NotchLetras`. Ajustes y desfases se guardan en preferencias locales de macOS. La carátula se conserva en memoria. No hay cuentas propias, analítica, reconocimiento de audio, credenciales incrustadas ni servicios de pago.
+Las letras se guardan solo en `~/Library/Application Support/NotchLetras`. Se conserva el nombre interno de esta carpeta y la identidad de preferencias para mantener los datos de versiones anteriores. Ajustes y desfases se guardan en preferencias locales de macOS. La carátula se conserva en memoria. No hay cuentas propias, analítica, reconocimiento de audio, credenciales incrustadas ni servicios de pago.
 
 Con letra por frase solo se resalta la frase. Sin tiempos se muestra texto sin saltos. Las letras cargadas siguen disponibles sin red; los fallos se reintentan con espera creciente de 20 a 120 segundos, y se reintenta al restablecerse la conexión. Una elección manual no se sustituye automáticamente. La háptica necesita un trackpad compatible; macOS controla su fuerza física.
 
@@ -59,7 +59,7 @@ La dependencia Yams 6.2.2 está fijada en `Package.resolved`. Su licencia se inc
 ./scripts/package-source.sh
 ```
 
-Genera `dist/notch-letras-0.5.2-source.tar.gz` con una lista explícita de archivos publicables. No incluye investigación local, binarios de terceros, letras descargadas ni preferencias. La carpeta `research/` es solo local y se excluye también de Git.
+Genera `dist/lyrical-notch-0.5.3-source.tar.gz` con una lista explícita de archivos publicables. No incluye investigación local, binarios de terceros, letras descargadas ni preferencias. La carpeta `research/` es solo local y se excluye también de Git.
 
 Modos de desarrollo: `--self-test` ejecuta comprobaciones sin UI; `--preview-hover` abre una demo sintética desplegada; `--preview-player` mantiene el panel desplegado con el reproductor real; `--preview-cycle` alterna la expansión de la demo. La demo no reproduce audio ni demuestra precisión de una canción real. `--check-wake-recovery` comprueba los manejadores de despertar con un reproductor real abierto, simulando avisos solo dentro de este proceso, sin dormir el Mac ni cambiar la reproducción.
 

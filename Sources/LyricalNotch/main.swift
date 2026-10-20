@@ -547,7 +547,7 @@ struct LyricResponse: Codable {
         usingSelectedLyrics = false; retryAfter = .distantFuture
         demo.toggle(); request?.cancel(); wordRequest?.cancel(); wordSource = ""; artworkRequest?.cancel(); artwork = nil; songNoticeTask?.cancel(); songNotice = false
         if demo {
-            track = Track(title: "Tu música, a tu manera", artist: "Notch Letras · Demostración", album: "", duration: 180, position: 0, playing: true, player: "Demo")
+            track = Track(title: "Tu música, a tu manera", artist: "Lyrical Notch · Demostración", album: "", duration: 180, position: 0, playing: true, player: "Demo")
             lines = (0..<30).map { index in
                 let text = ["Tu música, a tu manera", "Las palabras encuentran su lugar", "Un pequeño espacio para cada canción", "Hazlo tuyo, a tu ritmo", "Todo empieza con una melodía"][index % 5]
                 let words = text.split(separator: " ").map(String.init)
@@ -605,7 +605,7 @@ struct NotchView: View {
                     .help("Abrir \(model.track?.player == "Music" ? "Música" : "Spotify")")
                     .accessibilityLabel("Abrir reproductor desde la carátula")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(model.track?.title ?? "Notch Letras").font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                        Text(model.track?.title ?? "Lyrical Notch").font(.system(size: 13, weight: .semibold)).lineLimit(1)
                         Text(model.track?.artist ?? "Tu música, a tu manera").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer()
@@ -628,14 +628,14 @@ struct NotchView: View {
                         .overlay {
                             if model.songNotice {
                                 VStack(spacing: 3) {
-                                    Text(model.track?.title ?? "Notch Letras").font(.system(size: model.fontSize, weight: .semibold)).lineLimit(1)
+                                    Text(model.track?.title ?? "Lyrical Notch").font(.system(size: model.fontSize, weight: .semibold)).lineLimit(1)
                                     if model.expanded { Text(model.track?.artist ?? "").font(.caption).foregroundStyle(.secondary) }
                                 }.transition(.opacity.combined(with: .offset(y: 5)))
                             }
                         }
                     }
                 } else {
-                    Text(model.expanded ? "Controles de reproducción" : (model.track?.title ?? "Notch Letras"))
+                    Text(model.expanded ? "Controles de reproducción" : (model.track?.title ?? "Lyrical Notch"))
                         .font(.system(size: model.fontSize, weight: .medium)).lineLimit(1)
                 }
             }
@@ -688,7 +688,7 @@ struct FullLyricsView: View {
     @ObservedObject var model: Model
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(model.track?.title ?? "Notch Letras").font(.title.bold())
+            Text(model.track?.title ?? "Lyrical Notch").font(.title.bold())
             Text(model.track?.artist ?? "").foregroundStyle(.secondary)
             LyricsListView(model: model, embedded: false)
             if let error = model.playbackError { Text(error).font(.caption).foregroundStyle(.orange) }
@@ -714,7 +714,7 @@ final class OverlayPanel: NSPanel {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        status.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Notch Letras")
+        status.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Lyrical Notch")
         let menu = NSMenu()
         for (title, action) in [("Ajustes…", #selector(openSettings)), ("Letra completa", #selector(openLyrics)), ("Elegir otra letra…", #selector(openLyricChoices)), ("Fijar / cerrar notch", #selector(togglePinned)), ("Importar .lrc…", #selector(importLyrics)), ("Demostración", #selector(demo)), ("Salir", #selector(quit))] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: title == "Salir" ? "q" : ""); item.target = self; menu.addItem(item)
@@ -898,12 +898,12 @@ final class OverlayPanel: NSPanel {
         shortcut.stop(); model.networkMonitor?.cancel(); model.timer?.invalidate()
     }
     @objc func openLyricChoices() {
-        if choices == nil { choices = window(title: "Notch Letras · Elegir letra", view: LyricChoicesView(model: model)) }
+        if choices == nil { choices = window(title: "Lyrical Notch · Elegir letra", view: LyricChoicesView(model: model)) }
         NSApp.activate(ignoringOtherApps: true); choices?.makeKeyAndOrderFront(nil)
     }
     @objc func openSettings() {
         if settings == nil {
-            settings = window(title: "Notch Letras · Ajustes", view: SettingsView(model: model))
+            settings = window(title: "Lyrical Notch · Ajustes", view: SettingsView(model: model))
             settings?.setContentSize(NSSize(width: 860, height: 600)); settings?.center()
         }
         NSApp.activate(ignoringOtherApps: true); settings?.makeKeyAndOrderFront(nil)
@@ -911,7 +911,7 @@ final class OverlayPanel: NSPanel {
     @objc func lyricsClosed() { model.lyricsWindowVisible = false }
     @objc func openLyrics() {
         if lyrics == nil {
-            lyrics = window(title: "Notch Letras · Letra", view: FullLyricsView(model: model))
+            lyrics = window(title: "Lyrical Notch · Letra", view: FullLyricsView(model: model))
             NotificationCenter.default.addObserver(self, selector: #selector(lyricsClosed), name: NSWindow.willCloseNotification, object: lyrics)
         }
         model.lyricsWindowVisible = true

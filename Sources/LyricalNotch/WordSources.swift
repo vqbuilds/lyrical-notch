@@ -109,7 +109,7 @@ func parseWordTTML(_ data: Data) -> [LyricLine] {
 enum WordSources {
     static func data(_ url: URL, netease: Bool = false) async throws -> Data {
         var request = URLRequest(url: url); request.timeoutInterval = 10
-        request.setValue("NotchLetras/0.3", forHTTPHeaderField: "User-Agent")
+        request.setValue("LyricalNotch/0.5.3", forHTTPHeaderField: "User-Agent")
         if netease { request.setValue("https://music.163.com/", forHTTPHeaderField: "Referer") }
         let (data, response) = try await URLSession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200, data.count < 8_000_000 else { throw URLError(.badServerResponse) }
