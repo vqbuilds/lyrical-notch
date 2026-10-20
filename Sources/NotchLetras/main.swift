@@ -705,7 +705,7 @@ final class OverlayPanel: NSPanel {
     }
     func rebuildPanel() {
         let top = display()?.safeAreaInsets.top ?? 0
-        model.availablePanelHeight = max(280, (display()?.frame.height ?? 900) - top - 80)
+        model.availablePanelHeight = max(280, Double(display()?.frame.height ?? 900) - Double(top) - 80)
         let hosting = NSHostingView(rootView: NotchView(model: model, top: top))
         hosting.sizingOptions = []
         panel.contentView = hosting
