@@ -1,0 +1,16 @@
+.DS_Store
+.build/
+build/
+dist/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+*.dSYM/
+*.log
+.env
+.env.*
+# Local investigation only: includes third-party binaries and downloaded lyrics.
+research/
+review/
+scripts/rea-ghidra.sh
+scripts/ghidra/
