@@ -852,6 +852,7 @@ final class OverlayPanel: NSPanel {
     @objc func quit() { NSApp.terminate(nil) }
 }
 if CommandLine.arguments.contains("--self-test") {
+    MainActor.assumeIsolated { verifyNativeInkAlignment() }
     verifyKaraoke()
     verifyWordSources()
     MainActor.assumeIsolated { verifyAppReliability() }

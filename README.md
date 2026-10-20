@@ -59,7 +59,7 @@ La dependencia Yams 6.2.2 está fijada en `Package.resolved`. Su licencia se inc
 ./scripts/package-source.sh
 ```
 
-Genera `dist/notch-letras-0.5.0-source.tar.gz` con una lista explícita de archivos publicables. No incluye investigación local, binarios de terceros, letras descargadas ni preferencias. La carpeta `research/` es solo local y se excluye también de Git.
+Genera `dist/notch-letras-0.5.1-source.tar.gz` con una lista explícita de archivos publicables. No incluye investigación local, binarios de terceros, letras descargadas ni preferencias. La carpeta `research/` es solo local y se excluye también de Git.
 
 Modos de desarrollo: `--self-test` ejecuta comprobaciones sin UI; `--preview-hover` abre una demo sintética desplegada; `--preview-player` mantiene el panel desplegado con el reproductor real; `--preview-cycle` alterna la expansión de la demo. La demo no reproduce audio ni demuestra precisión de una canción real.
 

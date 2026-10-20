@@ -1,4 +1,10 @@
-# Validación 0.5.0
+# Validación 0.5.1
+
+## Revisión 0.5.1 · 20 de octubre de 2026
+
+- Regresión del karaoke: el texto base y el resaltado comparten ahora las mismas posiciones de dibujo. Comprobación por píxeles con resaltado parcial y completo, alineación izquierda y centrada, y una o varias líneas.
+
+- Comprobación visual en la app instalada con Spotify y «Crying Lightning»: frase partida en dos líneas y relleno parcial sin duplicación ni desplazamiento.
 
 ## Revisión 0.5.0 · 20 de octubre de 2026
 

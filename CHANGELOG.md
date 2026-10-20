@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1
+
+- Fix vertically displaced karaoke highlighting by drawing base text and sung text with identical Core Text baselines.
+- Add pixel regression checks for partial and complete highlighting, centered and left-aligned, including wrapped lyrics.
+
 ## 0.5.0
 
 - Exhaust all five timing providers plus LRCLIB, retain phrase lyrics while looking for karaoke, and report absence only after all lookups complete.
