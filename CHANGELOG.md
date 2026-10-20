@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0
+
+- Exhaust all five timing providers plus LRCLIB, retain phrase lyrics while looking for karaoke, and report absence only after all lookups complete.
+- Shared LRCLIB lookup ignores album edition spelling and also supports strict recording-matched search fallback.
+
+- Core Text karaoke with cached layout and animation only while visible and singing.
+- Phrase-boundary UI updates, adaptive player polling and bounded lyric retries.
+- Source picker directly inside the expanded notch, with per-song saved choice.
+- Han text filtering and conservative glued-word checks; exact-reference whitespace repair preserves timing.
+- Reproducible before/after CPU measurements, quality and invalidation regression checks.
+
 ## 0.4.2
 
 - QQ Music (QRC) y Kugou (KRC) en la búsqueda automática y en el selector de letras.

@@ -1,4 +1,19 @@
-# Validación 0.4.2
+# Validación 0.5.0
+
+## Revisión 0.5.0 · 20 de octubre de 2026
+
+- Renderer Core Text con composición guardada por línea/ancho; repintado acotado a las palabras activas.
+- Pruebas de regresión: avanzar dentro de una frase no emite cambios del modelo; cruzar a otra frase sí. Reintentos limitados a tres por canción.
+- Filtro de caracteres han configurable, detección conservadora de frases pegadas y reparación de espacios solo con referencia idéntica. Tests verifican que no cambian los tiempos.
+- Prueba real del mismo flujo automático con álbum deliberadamente distinto: «Mañana No Existe» de Sexy Zebras recupera 46 líneas por frase de LRCLIB; Hysteria recupera karaoke de Kugou y Amsterdam de NetEase.
+- Búsqueda completa: regresión de letra por frase disponible mientras sigue la búsqueda; «sin letra» solo después de terminar. La consulta usa la misma ruta para automático y selector.
+- Selector «Fuente» probado en el notch: QQ Music sin versión conserva la actual; lrc.red válida se aplica y persiste; vuelta a automático comprobada, sin detener Spotify.
+- Clic de una línea y de la frase resaltada comprobados con el escenario de prueba: la posición salta a 0:10 conservando los controles.
+- Pantallas del karaoke nativo compacto y expandido inspeccionadas con texto de prueba original, resaltado parcial y controles visibles.
+- Medición controlada antes/después: ver [ENERGY.md](ENERGY.md). No son medidas de autonomía ni vatios.
+
+Las comprobaciones antiguas siguientes conservan sus límites; no implican haber repetido físicamente todas las pruebas en esta versión.
+
 
 ## Fuentes añadidas en 0.4.2 · 20 de octubre de 2026
 
@@ -65,4 +80,4 @@ El reposo y la red se prueban mediante las mismas transiciones del modelo que us
 
 Apple Music todavía no tiene una prueba completa de integración en esta pasada. Su carátula no está implementada. No se ha repetido una campaña de cambios rápidos ni probado anuncios, fuera del alcance pedido. La cobertura de karaoke depende de cada grabación y del estado de los proveedores.
 
-La app y el archivo limpio de fuentes se compilan localmente. El workflow de GitHub se ejecutará solo cuando se publique el repositorio. La firma es local ad hoc; no hay notarización ni firma Developer ID.
+La app y el archivo limpio de fuentes se compilan localmente. La revisión 0.4.2 ya superó el workflow de GitHub; cada actualización ejecuta de nuevo su compilación y pruebas. La firma es local ad hoc; no hay notarización ni firma Developer ID.

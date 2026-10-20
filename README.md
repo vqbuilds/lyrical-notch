@@ -19,7 +19,7 @@ No incluye control de volumen, traducción ni reproducción desde navegador.
 
 ## Requisitos e instalación
 
-macOS 14 o posterior. El relleno karaoke por glifos requiere macOS 15; en macOS 14 se mantiene la letra sincronizada por frase. Spotify o Música deben ejecutarse en este Mac.
+macOS 14 o posterior. El karaoke usa un renderer nativo de Core Text con tiempos por palabra. Spotify o Música deben ejecutarse en este Mac.
 
 Para compilar necesitas Swift 6 o posterior y las herramientas de desarrollo de Apple:
 
@@ -59,10 +59,22 @@ La dependencia Yams 6.2.2 está fijada en `Package.resolved`. Su licencia se inc
 ./scripts/package-source.sh
 ```
 
-Genera `dist/notch-letras-0.4.2-source.tar.gz` con una lista explícita de archivos publicables. No incluye investigación local, binarios de terceros, letras descargadas ni preferencias. La carpeta `research/` es solo local y se excluye también de Git.
+Genera `dist/notch-letras-0.5.0-source.tar.gz` con una lista explícita de archivos publicables. No incluye investigación local, binarios de terceros, letras descargadas ni preferencias. La carpeta `research/` es solo local y se excluye también de Git.
 
 Modos de desarrollo: `--self-test` ejecuta comprobaciones sin UI; `--preview-hover` abre una demo sintética desplegada; `--preview-player` mantiene el panel desplegado con el reproductor real; `--preview-cycle` alterna la expansión de la demo. La demo no reproduce audio ni demuestra precisión de una canción real.
 
 ### Diagnóstico y ajuste rápido
 
 En el notch desplegado, pulsa el indicador «Por palabra / Por frase» para ver la fuente, la cobertura y volver a buscar. «Antes» muestra la letra 0,1 s antes; «Después», 0,1 s después. Pulsa el valor para restablecerlo. El ajuste se guarda por canción y no cambia la posición del audio. Las letras elegidas manualmente se cambian desde «Elegir otra…».
+
+### Fuentes y legibilidad
+
+En el notch desplegado, «Fuente» permite elegir QQ Music, Kugou, NetEase, AMLL, lrc.red o LRCLIB sin abrir Ajustes. Se conserva la letra actual mientras se busca; la elección válida se recuerda para esa canción. «Automática» vuelve al modo habitual. No todas las fuentes tienen todas las grabaciones.
+
+Por defecto se excluyen líneas con caracteres han, incluidos créditos o traducciones añadidos. Se puede desactivar en Letras y karaoke para canciones originales que los necesiten. Se detectan líneas latinas largas sin espacios. Solo se recuperan espacios cuando otra letra tiene exactamente los mismos caracteres y las separaciones respetan los segmentos temporales; las versiones sospechosas se descartan. Este filtro es conservador y no garantiza detectar todos los errores.
+
+### Consumo
+
+El texto del karaoke se compone una vez por línea y ancho. Solo se actualiza el recorte de color mientras se canta, hasta 30 fps; pausa, ocultación y descansos vocales detienen esos repintados. El reloj no publica cambios de toda la interfaz en cada paso. Las búsquedas automáticas tienen un máximo de tres reintentos por canción. Medidas y límites: [docs/ENERGY.md](docs/ENERGY.md).
+
+La búsqueda automática comprueba las cinco fuentes de karaoke y LRCLIB en paralelo. Muestra cuanto antes una letra por frase y solo la sustituye por una versión con mejores tiempos. El aviso de ausencia se muestra al finalizar todas las consultas. La coincidencia usa canción, artista y duración; no exige el nombre exacto del álbum. Las consultas de LRCLIB para texto visible y referencias de espacios se comparten para evitar descargas duplicadas. Las letras válidas ya guardadas se reutilizan.

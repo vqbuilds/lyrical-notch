@@ -22,6 +22,7 @@ private func timestamp(_ match: NSTextCheckingResult, in text: NSString) -> Doub
     return (Double(text.substring(with: match.range(at: 1))) ?? 0) * 60 + (Double(text.substring(with: match.range(at: 2))) ?? 0) + (Double("0." + fraction) ?? 0)
 }
 func parseLRC(_ text: String) -> [LyricLine] {
+    guard text.utf8.count < 2_000_000 else { return [] }
     let lineRE = try! NSRegularExpression(pattern: #"\[(\d+):(\d{2})(?:[\.:](\d{1,3}))?\]"#)
     let wordRE = try! NSRegularExpression(pattern: #"<(\d+):(\d{2})(?:[\.:](\d{1,3}))?>"#)
     let offsetRE = try! NSRegularExpression(pattern: #"(?i)\[offset:([+-]?\d+)\]"#)
@@ -75,55 +76,6 @@ func fillProgress(at time: Double, start: Double, end: Double) -> Double {
     guard end > start else { return time >= start ? 1 : 0 }
     return max(0, min(1, (time - start) / (end - start)))
 }
-struct SungSpan: TextAttribute { var start: Double; var end: Double }
-@available(macOS 15.0, *)
-struct KaraokeRenderer: TextRenderer {
-    var position: Double
-    func draw(layout: Text.Layout, in context: inout GraphicsContext) {
-        for line in layout {
-            for run in line {
-                guard let timing = run[SungSpan.self] else { context.draw(run); continue }
-                var muted = context; muted.opacity = 0.34; muted.draw(run)
-                let amount = fillProgress(at: position, start: timing.start, end: timing.end) * Double(run.count)
-                for (index, glyph) in run.enumerated() {
-                    let fraction = max(0, min(1, amount - Double(index)))
-                    guard fraction > 0 else { continue }
-                    var highlight = context
-                    var rect = glyph.typographicBounds.rect
-                    if run.layoutDirection == .rightToLeft { rect.origin.x += rect.width * (1 - fraction) }
-                    rect.size.width *= fraction
-                    rect.origin.y -= 3; rect.size.height += 6
-                    highlight.clip(to: Path(rect))
-                    highlight.draw(glyph)
-                }
-            }
-        }
-    }
-}
-struct KaraokeText: View {
-    let line: LyricLine
-    let nextTime: Double?
-    let position: Double
-    var enabled = true
-    var tint: Color = .white
-    var timedText: Text {
-        if line.hasWords {
-            return line.words.reduce(Text("")) { result, word in
-                let end = word.end ?? word.start
-                return result + Text(word.text).customAttribute(SungSpan(start: word.start, end: end))
-            }
-        }
-        return Text(line.text)
-    }
-    var body: some View {
-        Group {
-            if #available(macOS 15.0, *), enabled, !line.text.isEmpty {
-                timedText.textRenderer(KaraokeRenderer(position: position))
-            } else { Text(line.text.isEmpty ? "♪" : line.text) }
-        }.foregroundStyle(tint).accessibilityLabel(line.text)
-    }
-}
-
 func verifyKaraoke() {
     let enhanced = parseLRC("[offset:200]\n[00:10.00]<00:10.00>Hola <00:10.50>mundo<00:11.50>\n[00:12.00]Otra frase")
     precondition(enhanced.count == 2 && enhanced[0].text == "Hola mundo")
@@ -160,4 +112,20 @@ func verifyKaraoke() {
     precondition(!LyricLine(time: 0, text: "Different", words: parsed[0].words).hasWords)
     precondition(!LyricLine(time: 0, text: "mundoHola", words: [WordTiming(text: "mundo", start: 2, end: 3), WordTiming(text: "Hola", start: 1, end: 2)]).hasWords)
     print("Karaoke checks passed: word timestamps, enhanced LRC, offset, Lyricsfile YAML, malformed input, phrase-only fallback, progress boundaries and seeking.")
+}
+
+struct AnimatedLyricLine: View {
+    @ObservedObject var model: Model
+    let line: LyricLine
+    let visible: Bool
+    var size: Double? = nil
+    var centered = false
+    var body: some View {
+        Group {
+            if model.karaokeEnabled && line.hasWords {
+                NativeKaraoke(model: model, line: line, fontSize: size ?? model.fontSize,
+                    centered: centered, visible: visible)
+            } else { Text(line.text.isEmpty ? "♪" : line.text).foregroundStyle(model.lyricColor) }
+        }.accessibilityLabel(line.text)
+    }
 }

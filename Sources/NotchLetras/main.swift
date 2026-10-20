@@ -72,6 +72,18 @@ struct LyricResponse: Codable {
     @Published var artworkColor: Color = .white
     @Published var wordStatus = "Sin tiempos por palabra cargados"
     @Published var wordSource = ""
+    @Published var filterHanLyrics = UserDefaults.standard.object(forKey: "filterHanLyrics") as? Bool ?? true {
+        didSet { providerRequest?.cancel(); providerToken = UUID(); providerChoices = [:]; choosingProvider = false; save("filterHanLyrics", filterHanLyrics); if let song = track, !demo { usingSelectedLyrics = false; wordSource = ""; fetch(song) } }
+    }
+    @Published var qualityStatus = ""
+    @Published var lyricsLoading = false
+    var lyricRequestToken = UUID()
+    @Published var sourcePickerOpen = false
+    @Published var choosingProvider = false
+    @Published var providerMessage = ""
+    var providerRequest: Task<Void, Never>?
+    var providerToken = UUID()
+    var providerChoices: [LyricProvider: LyricChoice] = [:]
     var wordRequest: Task<Void, Never>?
     @Published var songNotice = false
     var songNoticeTask: Task<Void, Never>?
@@ -84,17 +96,21 @@ struct LyricResponse: Codable {
     @Published var artworkEnabled = UserDefaults.standard.object(forKey: "artworkEnabled") as? Bool ?? true { didSet { save("artworkEnabled", artworkEnabled) } }
     @Published var artworkOpacity = UserDefaults.standard.object(forKey: "artworkOpacity") as? Double ?? 0.38 { didSet { save("artworkOpacity", artworkOpacity) } }
     @Published var track: Track?
-    @Published var lines: [LyricLine] = []
+    @Published var lines: [LyricLine] = [] { didSet { updateLyricIndex() } }
     @Published var plain = ""
     @Published var message = "Abre Spotify o Música y reproduce una canción"
     @Published var demo = false
     @Published var expanded = false
-    @Published var polling = false
-    @Published var position = 0.0
+    var polling = false
+    var position = 0.0 { didSet { if panelVisible || lyricsWindowVisible { updateLyricIndex() } } }
+    @Published var currentIndex: Int?
+    @Published var clockRevision = 0
+    @Published var panelVisible = false { didSet { if panelVisible { position = playbackPosition(at: Date()) } } }
+    @Published var lyricsWindowVisible = false { didSet { if lyricsWindowVisible { position = playbackPosition(at: Date()) } } }
     @Published var width: Double = UserDefaults.standard.object(forKey: "width") as? Double ?? 460 { didSet { save("width", width); layout?() } }
     @Published var compactHeight: Double = UserDefaults.standard.object(forKey: "compactHeight") as? Double ?? 34 { didSet { save("compactHeight", compactHeight); layout?() } }
     @Published var fontSize: Double = UserDefaults.standard.object(forKey: "font") as? Double ?? 17 { didSet { save("font", fontSize) } }
-    @Published var offset = 0.0 { didSet { if !loadingOffset, !demo, let key = track?.key { songPreferences.setOffset(offset, for: key) } } }
+    @Published var offset = 0.0 { didSet { updateLyricIndex(); if !loadingOffset, !demo, let key = track?.key { songPreferences.setOffset(offset, for: key) } } }
     @Published var hidePaused = UserDefaults.standard.bool(forKey: "hidePaused") { didSet { save("hidePaused", hidePaused); layout?() } }
     @Published var accent: Double = UserDefaults.standard.object(forKey: "accent") as? Double ?? 0.48 { didSet { save("accent", accent) } }
     @Published var preferred = UserDefaults.standard.string(forKey: "preferred") ?? "Auto" { didSet { save("preferred", preferred) } }
@@ -115,6 +131,7 @@ struct LyricResponse: Codable {
     var refreshToken = UUID()
     var retryAfter = Date.distantFuture
     var retryDelay = 20.0
+    var lyricRetryCount = 0
     var usingSelectedLyrics = false
     func loadSongOffset() {
         loadingOffset = true
@@ -124,8 +141,10 @@ struct LyricResponse: Codable {
     func prepareForSleep() {
         position = playbackPosition(at: Date()); sampledPosition = position
         suspended = true; track?.playing = false; playbackEpoch += 1
+        timer?.invalidate()
         pollTask?.cancel(); polling = false
-        request?.cancel(); wordRequest?.cancel(); artworkRequest?.cancel()
+        request?.cancel(); wordRequest?.cancel(); artworkRequest?.cancel(); providerRequest?.cancel()
+        providerToken = UUID(); choosingProvider = false
         pendingSeek = nil
         connectionStatus = "En reposo · reconectando al despertar"
     }
@@ -134,11 +153,12 @@ struct LyricResponse: Codable {
         pollTask?.cancel(); polling = false
         lastSample = Date()
         connectionStatus = "Reconectando con el reproductor…"
-        retryAfter = .distantPast
-        if reconnect { poll() }
+        if !usingSelectedLyrics && !lines.contains(where: \.hasWords) { retryAfter = .distantPast }
+        if reconnect { startClock(); poll() }
     }
     func scheduleLyricsRetry() {
-        guard !usingSelectedLyrics, !demo else { return }
+        guard !usingSelectedLyrics, !demo, lyricRetryCount < 3 else { retryAfter = .distantFuture; return }
+        lyricRetryCount += 1
         retryAfter = Date().addingTimeInterval(retryDelay)
         retryDelay = min(120, retryDelay * 2)
     }
@@ -157,7 +177,10 @@ struct LyricResponse: Codable {
     var karaokeStatus: String {
         lines.contains(where: \.hasWords) ? "Karaoke con tiempos por palabra" : "Sin tiempos por palabra: se muestra la frase completa, sin barrido"
     }
-    var currentIndex: Int? { lines.lastIndex { $0.time <= position + offset } }
+    func updateLyricIndex() {
+        let index = lines.lastIndex { $0.time <= position + offset }
+        if index != currentIndex { currentIndex = index }
+    }
     var currentText: String {
         if let i = currentIndex { return lines[i].text.isEmpty ? "♪" : lines[i].text }
         if !lines.isEmpty { return "♪  \(track?.title ?? "")" }
@@ -188,16 +211,15 @@ struct LyricResponse: Codable {
     func save(_ key: String, _ value: Any) { UserDefaults.standard.set(value, forKey: key) }
     func start() {
         try? FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
-        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
+        startClock()
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self] path in
             Task { @MainActor in
                 guard let self else { return }
                 let wasOffline = !self.networkAvailable
                 self.networkAvailable = path.status == .satisfied
-                if wasOffline && self.networkAvailable {
+                if wasOffline && self.networkAvailable && !self.usingSelectedLyrics && !self.lines.contains(where: \.hasWords) {
+                    self.lyricRetryCount = 0
                     self.retryAfter = .distantPast
                     self.retryDelay = 20
                 }
@@ -207,20 +229,27 @@ struct LyricResponse: Codable {
         networkMonitor = monitor
         poll()
     }
-    var counter = 0
+    var nextPoll = Date.distantPast
+    func startClock() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        timer?.tolerance = 0.03
+    }
     func tick() {
-        updateHover?()
         guard !suspended else { return }
+        updateHover?()
         if !demo, networkAvailable, Date() >= retryAfter, let track {
             retryAfter = .distantFuture
             fetch(track, bypass: true)
         }
         if track?.playing == true { position = min(track?.duration ?? .infinity, sampledPosition + Date().timeIntervalSince(lastSample)) }
-        counter += 1
-        if counter % 7 == 0 && !demo { poll() }
+        if !demo, Date() >= nextPoll { poll() }
     }
     func poll() {
         guard !suspended, !demo, !polling, seekRequest == nil else { return }; polling = true
+        nextPoll = Date().addingTimeInterval(track?.playing == true ? 1.05 : (track == nil ? 5 : 2))
         let pollGeneration = seekGeneration
         let epoch = playbackEpoch
         let selection = preferred
@@ -266,16 +295,23 @@ struct LyricResponse: Codable {
     func acceptPlayback(_ incoming: Track?, error: String?, sampleIsCurrent: Bool = true) {
         let oldCover = track?.artworkURL
         let oldKey = track?.key
-        track = incoming
-        connectionStatus = incoming.map { "\($0.player == "Music" ? "Música" : $0.player) · \($0.playing ? "Reproduciendo" : "En pausa")" } ?? (error ?? "Sin reproductor conectado")
+        // The interpolated clock is separate: a position sample must not invalidate every view.
+        var comparable = incoming
+        if let old = track { comparable?.position = old.position }
+        if comparable != track { track = incoming }
+        let status = incoming.map { "\($0.player == "Music" ? "Música" : $0.player) · \($0.playing ? "Reproduciendo" : "En pausa")" } ?? (error ?? "Sin reproductor conectado")
+        if connectionStatus != status { connectionStatus = status }
         if oldCover != incoming?.artworkURL || oldKey != incoming?.key { loadArtwork() }
         if sampleIsCurrent {
+            if let incoming, abs(playbackPosition(at: Date()) - incoming.position) > 0.3 { clockRevision += 1 }
             sampledPosition = incoming?.position ?? 0; position = sampledPosition; lastSample = Date()
         }
         if oldKey != incoming?.key {
             playbackError = nil; usingSelectedLyrics = false
             refreshToken = UUID(); refreshingLyrics = false
-            retryAfter = .distantFuture; retryDelay = 20
+            lyricRequestToken = UUID(); lyricsLoading = false
+            providerRequest?.cancel(); providerToken = UUID(); providerChoices = [:]; choosingProvider = false; providerMessage = ""; qualityStatus = ""
+            retryAfter = .distantFuture; retryDelay = 20; lyricRetryCount = 0
             request?.cancel(); wordRequest?.cancel(); lines = []; plain = ""; wordSource = ""
             wordStatus = "Sin tiempos por palabra cargados"
             loadSongOffset()
@@ -309,77 +345,76 @@ struct LyricResponse: Codable {
         let name = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
         return cache.appendingPathComponent(name + ".json")
     }
-    func resolveWords(_ song: Track, bypass: Bool) {
-        wordRequest?.cancel()
-        wordStatus = "Buscando tiempos reales por palabra…"
-        wordRequest = Task {
-            let file = cacheFile(song.key).appendingPathExtension("words.json")
-            if !bypass, let raw = try? Data(contentsOf: file), let cached = try? JSONDecoder().decode(WordLyricsResult.self, from: raw),
-               validWordLines(cached.lines, duration: song.duration) {
-                guard !Task.isCancelled, !usingSelectedLyrics, track?.key == song.key else { return }
-                lines = cached.lines; plain = cached.lines.map(\.text).joined(separator: "\n"); wordSource = cached.source
-                message = "Karaoke por palabra disponible · guardado en este Mac"
-                wordStatus = "\(cached.source) · \(cached.wordCount) palabras con tiempos reales"
-                return
-            }
-            let result = await WordSources.fetch(song)
-            guard !Task.isCancelled, !usingSelectedLyrics, track?.key == song.key else { return }
-            if let result {
-                retryAfter = .distantFuture; retryDelay = 20
-                lines = result.lines; plain = result.lines.map(\.text).joined(separator: "\n"); wordSource = result.source
-                wordStatus = "\(result.source) · \(result.wordCount) palabras con tiempos reales"
-                message = "Karaoke por palabra disponible"
-                if let raw = try? JSONEncoder().encode(result) { try? raw.write(to: file, options: .atomic) }
-            } else {
-                scheduleLyricsRetry()
-                wordStatus = lines.contains(where: \.hasWords) ? "Tiempos por palabra de la letra cargada" : "No se encontraron tiempos por palabra para esta grabación. Sin barrido simulado."
+    func cachedReference(_ song: Track) -> [LyricLine] {
+        guard let raw = try? Data(contentsOf: cacheFile(song.key)), let row = try? JSONDecoder().decode(LyricResponse.self, from: raw) else { return [] }
+        return parseLRC(row.syncedLyrics ?? "")
+    }
+    func mergeLyricsCandidate(_ candidate: WordLyricsResult) {
+        guard !usingSelectedLyrics, let song = track else { return }
+        let incoming = lyricRank(candidate.lines, duration: song.duration)
+        let current = lyricRank(lines, duration: song.duration)
+        guard incoming > 0, incoming >= current else { return }
+        if incoming == current && !lines.isEmpty {
+            let oldCoverage = Double(lines.filter(\.hasWords).count) / Double(max(1, lines.count))
+            if candidate.coverage <= oldCoverage { return }
+        }
+        lines = candidate.lines; plain = candidate.lines.map(\.text).joined(separator: "\n"); wordSource = candidate.source
+        message = incoming == 2 ? "Karaoke por palabra disponible" : "Letra sincronizada por frase disponible"
+        wordStatus = incoming == 2 ? "\(candidate.source) · \(candidate.wordCount) palabras con tiempos reales" : "\(candidate.source) · sincronización por frase"
+    }
+    func finishLyricsSearch() {
+        lyricsLoading = false
+        if lines.isEmpty && plain.isEmpty {
+            message = networkAvailable ? "Sin letra disponible en las fuentes consultadas" : "Sin conexión · no hay letra guardada para esta canción"
+            wordStatus = "La búsqueda en todas las fuentes ha terminado"
+            if !networkAvailable { scheduleLyricsRetry() } else { retryAfter = .distantFuture }
+        } else {
+            retryAfter = .distantFuture
+            if lyricRank(lines, duration: track?.duration ?? 0) < 2 {
+                wordStatus = lines.isEmpty ? "Letra sin tiempos disponible" : "Letra por frase · no se encontraron tiempos por palabra en las fuentes consultadas"
             }
         }
     }
     func fetch(_ song: Track, bypass: Bool = false) {
         if restoreSelectedLyrics(for: song) { return }
+        request?.cancel(); wordRequest?.cancel()
+        lyricRequestToken = UUID()
+        let token = lyricRequestToken
         retryAfter = .distantFuture
-        resolveWords(song, bypass: bypass)
-        message = "Buscando letra…"
-        request?.cancel()
-        request = Task {
-            let file = cacheFile(song.key)
-            if !bypass, let data = try? Data(contentsOf: file), let lyrics = try? JSONDecoder().decode(LyricResponse.self, from: data) {
-                guard !Task.isCancelled, self.track?.key == song.key, !usingSelectedLyrics else { return }
-                apply(lyrics); return
+        lyricsLoading = true
+        if lines.isEmpty && plain.isEmpty { message = "Buscando letras en todas las fuentes…" }
+        wordStatus = "Comprobando fuentes de letras…"
+        let lineFile = cacheFile(song.key)
+        let wordFile = lineFile.appendingPathExtension("words.json")
+        if !bypass {
+            if let raw = try? Data(contentsOf: lineFile), let row = try? JSONDecoder().decode(LyricResponse.self, from: raw) { apply(row) }
+            if let raw = try? Data(contentsOf: wordFile), let cached = try? JSONDecoder().decode(WordLyricsResult.self, from: raw),
+               let cleaned = LyricsQuality.accepted(cached, reference: cachedReference(song), filterHan: filterHanLyrics) {
+                mergeLyricsCandidate(cleaned)
+                if lyricRank(cleaned.lines, duration: song.duration) == 2 { lyricsLoading = false; return }
             }
-            var parts = URLComponents(string: "https://lrclib.net/api/get")!
-            parts.queryItems = [URLQueryItem(name: "track_name", value: song.title), URLQueryItem(name: "artist_name", value: song.artist), URLQueryItem(name: "album_name", value: song.album), URLQueryItem(name: "duration", value: String(Int(song.duration.rounded())))]
-            do {
-                var req = URLRequest(url: parts.url!); req.timeoutInterval = 15; req.setValue("NotchLetras/0.1 (personal macOS lyrics app)", forHTTPHeaderField: "User-Agent")
-                var (data, response) = try await URLSession.shared.data(for: req)
-                guard !Task.isCancelled, self.track?.key == song.key, wordSource.isEmpty else { return }
-                if (response as? HTTPURLResponse)?.statusCode == 404 {
-                    var search = URLComponents(string: "https://lrclib.net/api/search")!
-                    let artist = song.artist.components(separatedBy: ",").first ?? song.artist
-                    search.queryItems = [URLQueryItem(name: "track_name", value: song.title), URLQueryItem(name: "artist_name", value: artist)]
-                    req.url = search.url
-                    (data, response) = try await URLSession.shared.data(for: req)
-                    guard !Task.isCancelled, self.track?.key == song.key, wordSource.isEmpty else { return }
-                    let results = (try? JSONDecoder().decode([LyricResponse].self, from: data)) ?? []
-                    let normalize: (String) -> String = { $0.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX")).trimmingCharacters(in: .whitespacesAndNewlines) }
-                    let candidates = results.filter {
-                        normalize($0.trackName ?? "") == normalize(song.title) &&
-                        normalize($0.artistName ?? "").contains(normalize(artist)) &&
-                        abs(($0.duration ?? -100) - song.duration) <= 3
-                    }
-                    if let match = candidates.sorted(by: { ($0.hasWordSync == true ? 0 : ($0.syncedLyrics != nil ? 1 : 2)) < ($1.hasWordSync == true ? 0 : ($1.syncedLyrics != nil ? 1 : 2)) }).first {
-                        if let encoded = try? JSONEncoder().encode(match) { try? encoded.write(to: file, options: .atomic) }
-                        apply(match); return
-                    }
-                    message = "Sin letra disponible · puedes importar un .lrc"; return
-                }
-                guard (response as? HTTPURLResponse)?.statusCode == 200 else { message = "Servicio de letras no disponible · reintenta desde Ajustes"; return }
-                let lyrics = try JSONDecoder().decode(LyricResponse.self, from: data)
-                try? data.write(to: file, options: .atomic); apply(lyrics)
-            } catch {
-                if !Task.isCancelled, self.track?.key == song.key, wordSource.isEmpty { message = "Sin conexión con las letras · se reintentará automáticamente"; scheduleLyricsRetry() }
+        }
+        let filter = filterHanLyrics
+        let reference = cachedReference(song)
+        request = Task { [self] in
+            async let fallback = LineSource.shared.get(song, bypass: bypass)
+            async let candidates = WordSources.fetch(song, filterHan: filter, reference: reference, onCandidate: { [weak self] candidate in
+                guard let self, self.lyricRequestToken == token, self.track?.key == song.key, !self.usingSelectedLyrics else { return }
+                self.mergeLyricsCandidate(candidate)
+            })
+            let row = await fallback
+            guard !Task.isCancelled, lyricRequestToken == token, track?.key == song.key, !usingSelectedLyrics else { return }
+            if let row {
+                apply(row)
+                if let raw = try? JSONEncoder().encode(row) { try? raw.write(to: lineFile, options: .atomic) }
             }
+            let best = await candidates
+            guard !Task.isCancelled, lyricRequestToken == token, track?.key == song.key, !usingSelectedLyrics else { return }
+            if let best {
+                mergeLyricsCandidate(best)
+                if wordSource == best.source, lines == best.lines, let raw = try? JSONEncoder().encode(best) { try? raw.write(to: wordFile, options: .atomic) }
+            }
+            finishLyricsSearch()
         }
     }
     func apply(_ lyrics: LyricResponse) {
@@ -389,10 +424,14 @@ struct LyricResponse: Codable {
         let incoming = rich.contains(where: \.hasWords) ? rich : (lrc.contains(where: \.hasWords) ? lrc : (rich.isEmpty ? lrc : rich))
         // A slower line-only source must not replace a word-timed result.
         if !wordSource.isEmpty && lines.contains(where: \.hasWords) { return }
-        lines = incoming
+        let review = incoming.isEmpty ? LyricsQuality.reviewPlain(lyrics.plainLyrics ?? "", filterHan: filterHanLyrics) : LyricsQuality.review(incoming, filterHan: filterHanLyrics)
+        qualityStatus = review.notes.joined(separator: " · ")
+        guard !review.suspicious else { message = lyricsLoading ? "Buscando una letra legible en las demás fuentes…" : "Letra descartada por problemas de legibilidad · elige otra fuente"; return }
+        lines = incoming.isEmpty ? [] : review.lines
+        wordSource = "LRCLIB"
         if incoming.contains(where: \.hasWords) { wordStatus = "LRCLIB o archivo local · tiempos por palabra" }
-        plain = lyrics.plainLyrics ?? lines.map(\.text).joined(separator: "\n")
-        message = lyrics.instrumental == true ? "♪ Instrumental" : (!lines.isEmpty ? "Letra sincronizada disponible" : (plain.isEmpty ? "Sin letra disponible" : "Letra sin tiempos · ábrela con un clic"))
+        plain = lines.isEmpty ? (lyrics.plainLyrics ?? "").components(separatedBy: .newlines).filter { !filterHanLyrics || !LyricsQuality.hasHan($0) }.joined(separator: "\n") : lines.map(\.text).joined(separator: "\n")
+        message = lyrics.instrumental == true ? "♪ Instrumental" : (!lines.isEmpty ? "Letra sincronizada disponible" : (plain.isEmpty ? (lyricsLoading ? "Buscando letras en todas las fuentes…" : "Sin letra disponible") : "Letra sin tiempos · ábrela con un clic"))
     }
     func control(_ command: String) {
         guard let player = track?.player, !demo else { return }
@@ -481,30 +520,19 @@ struct LyricResponse: Codable {
 struct LiveLyricsView: View {
     @ObservedObject var model: Model
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: model.track?.playing != true)) { context in
-            let time = model.playbackPosition(at: context.date) + model.offset
-            let index = model.lines.lastIndex { $0.time <= time }
-            VStack(spacing: 5) {
-                Group {
-                    if let index {
-                        let line = model.lines[index]
-                        let next = model.lines.dropFirst(index + 1).first { $0.time > line.time }?.time
-                        KaraokeText(line: line, nextTime: next, position: time, enabled: model.karaokeEnabled, tint: model.lyricColor)
-                            .id(line.time)
-                    } else { Text(model.currentText).foregroundStyle(.white) }
-                }
-                .font(.system(size: model.fontSize, weight: .semibold, design: .rounded))
-                .lineLimit(model.expanded ? 2 : 1).minimumScaleFactor(0.75)
-                .multilineTextAlignment(.center)
-                if model.expanded || model.twoLines, let next = nextLyric(in: model.lines, at: time) {
-                    Text(next)
-                        .font(.system(size: max(12, model.fontSize - 3), weight: .medium, design: .rounded))
-                        .foregroundStyle(model.lyricColor.opacity(0.4))
-                        .lineLimit(1).minimumScaleFactor(0.8)
-                        .accessibilityLabel("Siguiente frase: \(next)")
-                        .transition(.opacity.combined(with: .offset(y: 5)))
-                }
-
+        VStack(spacing: 5) {
+            Group {
+                if let index = model.currentIndex, model.lines.indices.contains(index) {
+                    AnimatedLyricLine(model: model, line: model.lines[index], visible: model.panelVisible, centered: true)
+                } else { Text(model.currentText).foregroundStyle(.white) }
+            }
+            .font(.system(size: model.fontSize, weight: .semibold, design: .rounded))
+            .lineLimit(model.expanded ? 2 : 1).minimumScaleFactor(0.75)
+            .multilineTextAlignment(.center)
+            if model.expanded || model.twoLines, let next = model.nextText {
+                Text(next).font(.system(size: max(12, model.fontSize - 3), weight: .medium, design: .rounded))
+                    .foregroundStyle(model.lyricColor.opacity(0.4)).lineLimit(1).minimumScaleFactor(0.8)
+                    .accessibilityLabel("Siguiente frase: \(next)")
             }
         }
     }
@@ -672,6 +700,9 @@ final class OverlayPanel: NSPanel {
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(screenChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        DistributedNotificationCenter.default().addObserver(self, selector: #selector(playerChanged), name: Notification.Name("com.spotify.client.PlaybackStateChanged"), object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(playerChanged), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(playerChanged), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
         refreshScreens(); model.start()
         if CommandLine.arguments.contains("--preview-cycle") {
             model.toggleDemo(); model.updateHover = nil
@@ -681,6 +712,17 @@ final class OverlayPanel: NSPanel {
                     withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { self.model.expanded.toggle() }
                 }
             }
+        } else if CommandLine.arguments.contains("--preview-karaoke") {
+            model.toggleDemo(); model.updateHover = nil
+            model.lines = (0..<40).map { row in
+                let tokens = ["These ", "are ", "original ", "words ", "for ", "a ", "timing ", "test"]
+                let start = Double(row * 5)
+                let words = tokens.enumerated().map { index, text in WordTiming(text: text, start: start + Double(index)*0.5, end: start + Double(index)*0.5 + 0.45) }
+                return LyricLine(time: start, text: tokens.joined(), end: start + 4, words: words)
+            }
+            model.track?.duration = 200
+            model.wordStatus = "Original benchmark fixture · real test timestamps"
+            positionPanel()
         } else if CommandLine.arguments.contains("--preview-player") {
             model.updateHover = nil; model.expanded = true; positionPanel()
         } else if CommandLine.arguments.contains("--preview-hover") {
@@ -688,7 +730,9 @@ final class OverlayPanel: NSPanel {
         } else if !UserDefaults.standard.bool(forKey: "hasLaunched") {
             UserDefaults.standard.set(true, forKey: "hasLaunched"); openSettings()
         }
+        if CommandLine.arguments.contains("--preview-paused") { model.sampledPosition = 2.25; model.position = 2.25; model.track?.playing = false }
         if CommandLine.arguments.contains("--preview-pinned") { model.pinned = true; setExpanded(true) }
+        if CommandLine.arguments.contains("--preview-hidden") { model.panelVisible = false; panel.orderOut(nil) }
         if CommandLine.arguments.contains("--enable-login") { let login = LoginItem(); login.setEnabled(true) }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -713,19 +757,18 @@ final class OverlayPanel: NSPanel {
     }
     @objc func screenChanged() { refreshScreens() }
     func checkHover() {
-        positionPanel()
         let cursor = NSEvent.mouseLocation
         let visible = NSRect(x: panel.frame.midX - model.visibleWidth / 2,
                              y: panel.frame.maxY - (display()?.safeAreaInsets.top ?? 0) - model.visibleHeight,
                              width: model.visibleWidth, height: (display()?.safeAreaInsets.top ?? 0) + model.visibleHeight)
         let inside = panel.isVisible && visible.contains(cursor)
         // The hosting window keeps a stable size. Transparent space passes clicks through.
-        panel.ignoresMouseEvents = !inside
+        if panel.ignoresMouseEvents != !inside { panel.ignoresMouseEvents = !inside }
         if suppressHover {
             if !inside { suppressHover = false }
             return
         }
-        guard !model.pinned, !model.lyricsDiagnosticsOpen, model.openOnHover else { hover = HoverState(expanded: model.expanded); return }
+        guard !model.pinned, !model.lyricsDiagnosticsOpen, !model.sourcePickerOpen, model.openOnHover else { hover = HoverState(expanded: model.expanded); return }
         let expanded = hover.update(inside: inside, now: ProcessInfo.processInfo.systemUptime)
         if model.expanded != expanded { setExpanded(expanded) }
     }
@@ -756,6 +799,7 @@ final class OverlayPanel: NSPanel {
         if panel.frame != frame { panel.setFrame(frame, display: true) }
         let visible = shouldShowPanel(enabled: model.panelEnabled, hidePaused: model.hidePaused, playing: model.track?.playing == true || model.pinned,
                                       hideFullScreen: model.hideFullScreen, fullScreen: NSApp.currentSystemPresentationOptions.contains(.fullScreen))
+        if model.panelVisible != visible { model.panelVisible = visible }
         if !visible {
             if panel.isVisible { panel.orderOut(nil) }
         } else if !panel.isVisible { panel.orderFrontRegardless() }
@@ -773,6 +817,7 @@ final class OverlayPanel: NSPanel {
         setExpanded(false)
         if panel.isKeyWindow { panel.resignKey() }
     }
+    @objc func playerChanged() { model.nextPoll = .distantPast; model.poll() }
     @objc func willSleep() { model.prepareForSleep() }
     @objc func didWake() { refreshScreens(); model.resumePlayback() }
     func applicationWillTerminate(_ notification: Notification) {
@@ -789,8 +834,13 @@ final class OverlayPanel: NSPanel {
         }
         NSApp.activate(ignoringOtherApps: true); settings?.makeKeyAndOrderFront(nil)
     }
+    @objc func lyricsClosed() { model.lyricsWindowVisible = false }
     @objc func openLyrics() {
-        if lyrics == nil { lyrics = window(title: "Notch Letras · Letra", view: FullLyricsView(model: model)) }
+        if lyrics == nil {
+            lyrics = window(title: "Notch Letras · Letra", view: FullLyricsView(model: model))
+            NotificationCenter.default.addObserver(self, selector: #selector(lyricsClosed), name: NSWindow.willCloseNotification, object: lyrics)
+        }
+        model.lyricsWindowVisible = true
         NSApp.activate(ignoringOtherApps: true); lyrics?.makeKeyAndOrderFront(nil)
     }
     func window<V: View>(title: String, view: V) -> NSWindow {
@@ -844,6 +894,25 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(!hover.update(inside: false, now: 1.3))
     precondition(hover.update(inside: true, now: 2))
     print("Checks passed: LRC parsing, next lyric boundaries and blanks, hover enter/exit hysteresis and re-entry.")
+} else if let flag = CommandLine.arguments.firstIndex(of: "--probe-lyrics"), CommandLine.arguments.count > flag + 3 {
+    let args = CommandLine.arguments
+    Task { @MainActor in
+        let model = Model()
+        let song = Track(title: args[flag+1], artist: args[flag+2], album: "Deliberately different album edition", duration: Double(args[flag+3]) ?? 0, position: 0, playing: false, player: "Spotify")
+        model.track = song
+        model.cache = FileManager.default.temporaryDirectory.appendingPathComponent("notch-lookup-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: model.cache, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: model.cache) }
+        model.fetch(song, bypass: true)
+        for _ in 0..<600 {
+            if !model.lyricsLoading { break }
+            if model.lines.isEmpty && model.plain.isEmpty { precondition(!model.message.contains("Sin letra disponible")) }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        print("SOURCE=\(model.wordSource) LINES=\(model.lines.count) WORDS=\(model.lines.filter(\.hasWords).count) STATUS=\(model.message) LOADING=\(model.lyricsLoading)")
+        exit(model.lyricsLoading || (model.lines.isEmpty && model.plain.isEmpty) ? 2 : 0)
+    }
+    dispatchMain()
 } else if let flag = CommandLine.arguments.firstIndex(of: "--probe-song"), CommandLine.arguments.count > flag + 3 {
     let args = CommandLine.arguments
     let song = Track(title: args[flag + 1], artist: args[flag + 2], album: "", duration: Double(args[flag + 3]) ?? 0, position: 0, playing: false, player: "Spotify")

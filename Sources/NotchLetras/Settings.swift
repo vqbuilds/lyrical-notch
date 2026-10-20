@@ -79,6 +79,8 @@ struct SettingsView: View {
     }
     @ViewBuilder private var lyrics: some View {
         Section("Karaoke") {
+            Toggle("Ocultar texto con caracteres chinos (han)", isOn: $model.filterHanLyrics)
+            Text("Filtra traducciones y créditos añadidos. Desactívalo para escuchar canciones cuyo texto original use estos caracteres.").font(.caption).foregroundStyle(.secondary)
             Toggle("Relleno progresivo de las letras", isOn: $model.karaokeEnabled)
             Text(model.wordStatus).font(.caption).foregroundStyle(.secondary)
             LabeledContent("Sincronía · \(model.offset, specifier: "%.1f") s") { Slider(value: $model.offset, in: -10...10, step: 0.1) }.disabled(model.track == nil || model.demo)

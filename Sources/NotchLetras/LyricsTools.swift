@@ -22,6 +22,7 @@ import SwiftUI
         guard let song = track, !demo, !usingSelectedLyrics, networkAvailable, !refreshingLyrics else { return }
         refreshToken = UUID()
         let token = refreshToken
+        lyricRetryCount = 0; retryDelay = 20
         refreshingLyrics = true
         fetch(song, bypass: true)
         let lineTask = request
@@ -40,6 +41,7 @@ struct LyricsDiagnosticsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Fuente: \(model.lyricsSourceLabel)").font(.headline)
+            if model.lyricsLoading { Text("Comprobando todas las fuentes…").font(.caption).foregroundStyle(.secondary) }
             Text("Sincronización: \(model.lyricsTimingLabel)")
             if !model.karaokeEnabled { Text("Relleno karaoke desactivado en Ajustes.").foregroundStyle(.secondary) }
             if !model.networkAvailable { Text("Sin conexión · se conserva la letra cargada.").foregroundStyle(.secondary) }
@@ -67,6 +69,11 @@ struct LyricsToolsView: View {
             .popover(isPresented: $model.lyricsDiagnosticsOpen) {
                 LyricsDiagnosticsView(model: model).padding(18).frame(width: 340)
             }
+            Button { model.sourcePickerOpen.toggle() } label: {
+                Label("Fuente", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .help("Cambiar la fuente de letras de esta canción")
+            .popover(isPresented: $model.sourcePickerOpen) { SourcePickerView(model: model) }
             Spacer(minLength: 0)
             Button("Antes") { model.adjustLyrics(by: 0.1) }
                 .help("Mostrar la letra 0,1 segundos antes")

@@ -32,7 +32,11 @@ func parseLegacyWords(_ text: String, qrc: Bool) -> [LyricLine] {
             let begin = (qrc ? time : start + time) / 1000
             return WordTiming(text: value, start: begin, end: begin + length/1000)
         }
-        guard !words.isEmpty else { return nil }
+        if words.isEmpty {
+            let plain = body as String
+            guard !plain.contains("<"), !plain.contains("("), !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return LyricLine(time: start/1000, text: plain.trimmingCharacters(in: .whitespacesAndNewlines), end: (start+duration)/1000)
+        }
         return LyricLine(time: start/1000, text: words.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines), end: (start+duration)/1000, words: words)
     }.sorted { $0.time < $1.time }
 }
@@ -70,7 +74,7 @@ extension WordSources {
             guard let response = await qqCall("music.musichallSong.PlayLyricInfo", "GetPlayLyricInfo", params), let hex = response["lyric"] as? String,
                   let decoded = LegacyLyricsCodec.qrc(hex) else { continue }
             let lines = parseLegacyWords(decoded, qrc: true)
-            guard validWordLines(lines, duration: song.duration) else { continue }
+            guard validSyncedLines(lines, duration: song.duration) else { continue }
             return WordLyricsResult(source: "QQ Music · QRC · \(id)", title: song.title, artist: song.artist, duration: candidate["interval"] as? Double ?? song.duration, lines: lines)
         }
         return nil
@@ -86,7 +90,7 @@ extension WordSources {
                   let response = await serviceJSON("https://lyrics.kugou.com/download", ["id": id, "accesskey": key, "fmt": "krc", "charset": "utf8", "client": "pc", "ver": "1"]),
                   let content = response["content"] as? String, let bytes = Data(base64Encoded: content), let decoded = LegacyLyricsCodec.krc(bytes) else { continue }
             let lines = parseLegacyWords(decoded, qrc: false)
-            guard validWordLines(lines, duration: song.duration) else { continue }
+            guard validSyncedLines(lines, duration: song.duration) else { continue }
             return WordLyricsResult(source: "Kugou · KRC · \(id)", title: song.title, artist: song.artist, duration: (candidate["duration"] as? Double ?? 0)/1000, lines: lines)
         }
         return nil

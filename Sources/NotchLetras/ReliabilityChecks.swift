@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 @MainActor func verifyAppReliability() {
     let suiteName = "NotchLetras.Checks.\(UUID().uuidString)"
@@ -73,15 +74,45 @@ import Foundation
     precondition(model.lyricsSourceLabel == "Local test" && model.lyricsTimingLabel == "Por frase")
     model.refreshLyrics()
     precondition(!model.refreshingLyrics && model.usingSelectedLyrics)
+    model.lines = [LyricLine(time: 0, text: "First original line"), LyricLine(time: 80, text: "Second original line")]
+    model.panelVisible = true
+    model.position = 73
+    var publications = 0
+    let observation = model.objectWillChange.sink { publications += 1 }
+    model.position = 74; model.position = 75
+    precondition(publications == 0) // Advancing inside a phrase never invalidates the whole UI.
+    model.position = 81
+    precondition(publications == 1 && model.currentIndex == 1)
+    observation.cancel()
+    model.panelVisible = false
+    var hiddenPublications = 0
+    let hiddenObservation = model.objectWillChange.sink { hiddenPublications += 1 }
+    model.position = 20
+    precondition(hiddenPublications == 0)
+    hiddenObservation.cancel()
     model.networkAvailable = false
     model.scheduleLyricsRetry()
     precondition(model.lines.count == 2) // Existing lyrics survive network loss.
+    model.usingSelectedLyrics = false; model.lyricRetryCount = 0
+    for _ in 0..<10 { model.scheduleLyricsRetry() }
+    precondition(model.lyricRetryCount == 3 && model.retryAfter == .distantFuture)
     precondition(playbackTimeLabel(0) == "0:00" && playbackTimeLabel(125) == "2:05")
     precondition(playbackTimeLabel(.nan) == "0:00")
     precondition(lyricSeekPosition(time: 40, offset: 1.4, duration: 120) == 38.6)
     model.demo = true
     model.seek(toPosition: 40)
     precondition(model.position == 40) // Progress ignores lyric offset.
+    let lookup = Model()
+    lookup.track = song; lookup.lyricsLoading = true; lookup.message = "Buscando letras en todas las fuentes…"
+    let phrase = WordLyricsResult(source: "LRCLIB", title: song.title, artist: song.artist, duration: song.duration, lines: choice.lines)
+    lookup.mergeLyricsCandidate(phrase)
+    precondition(lookup.lyricsLoading && lookup.lines.count == 2 && !lookup.message.contains("Sin letra"))
+    lookup.finishLyricsSearch()
+    precondition(!lookup.lyricsLoading && lookup.wordSource == "LRCLIB" && lookup.lines.count == 2)
+    lookup.lines = []; lookup.plain = ""; lookup.lyricsLoading = true
+    precondition(!lookup.message.contains("Sin letra"))
+    lookup.finishLyricsSearch()
+    precondition(lookup.message == "Sin letra disponible en las fuentes consultadas")
     model.request?.cancel(); model.wordRequest?.cancel(); model.songNoticeTask?.cancel()
     print("Reliability checks passed: per-song persistence, pause/resume, sleep/wake resampling, disconnect/reconnect, offline lyric retention, saved selection and progress seeking.")
 }

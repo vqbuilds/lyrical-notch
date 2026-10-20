@@ -19,6 +19,8 @@ func recordingMatches(title: String, artists: [String], duration: Double, song: 
     return artists.contains { identityKey($0) == identityKey(primary) || identityKey($0) == identityKey(song.artist) }
 }
 func validWordLines(_ lines: [LyricLine], duration: Double) -> Bool {
+    guard duration.isFinite, duration > 0, lines.count < 10_000,
+          lines.allSatisfy({ $0.time.isFinite && $0.time >= 0 && $0.time <= duration + 2.5 }) else { return false }
     let timed = lines.filter(\.hasWords)
     let words = timed.flatMap(\.words)
     guard timed.count >= 2, words.count >= 8, Double(timed.count) / Double(max(lines.count, 1)) >= 0.6 else { return false }
@@ -51,8 +53,9 @@ func parseTTMLTime(_ value: String?) -> Double? {
     guard let value else { return nil }
     if value.hasSuffix("ms") { return Double(value.dropLast(2)).map { $0 / 1000 } }
     if value.hasSuffix("s") { return Double(value.dropLast()) }
-    let parts = value.split(separator: ":").compactMap { Double($0) }
-    guard !parts.isEmpty else { return nil }
+    let components = value.split(separator: ":", omittingEmptySubsequences: false)
+    let parts = components.compactMap { Double($0) }
+    guard !parts.isEmpty, parts.count == components.count, parts.count <= 3, parts.allSatisfy({ $0.isFinite && $0 >= 0 }) else { return nil }
     return parts.reduce(0) { $0 * 60 + $1 }
 }
 private final class WordTTMLParser: NSObject, XMLParserDelegate {
@@ -117,7 +120,7 @@ enum WordSources {
               let url = URL(string: "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/spotify-lyrics/\(song.spotifyID).ttml"),
               let raw = try? await data(url) else { return nil }
         let lines = parseWordTTML(raw)
-        guard validWordLines(lines, duration: song.duration) else { return nil }
+        guard validSyncedLines(lines, duration: song.duration) else { return nil }
         return WordLyricsResult(source: "AMLL · TTML (ID de Spotify)", title: song.title, artist: song.artist, duration: song.duration, lines: lines)
     }
     static func netease(_ song: Track) async -> WordLyricsResult? {
@@ -135,10 +138,12 @@ enum WordSources {
             guard !Task.isCancelled, let id = candidate["id"] as? Int,
                   let url = URL(string: "https://music.163.com/api/song/lyric/v1?id=\(id)&lv=0&kv=0&tv=0&rv=0&yv=0&ytv=0&yrv=0"),
                   let raw = try? await data(url, netease: true),
-                  let lyric = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
-                  let yrc = lyric["yrc"] as? [String: Any], let text = yrc["lyric"] as? String else { continue }
-            let lines = parseYRC(text)
-            guard validWordLines(lines, duration: song.duration) else { continue }
+                  let lyric = try? JSONSerialization.jsonObject(with: raw) as? [String: Any] else { continue }
+            let yrc = lyric["yrc"] as? [String: Any]
+            let lrc = lyric["lrc"] as? [String: Any]
+            let wordLines = parseYRC(yrc?["lyric"] as? String ?? "")
+            let lines = wordLines.isEmpty ? parseLRC(lrc?["lyric"] as? String ?? "") : wordLines
+            guard validSyncedLines(lines, duration: song.duration) else { continue }
             return WordLyricsResult(source: "NetEase · YRC · \(id)", title: candidate["name"] as? String ?? song.title,
                 artist: song.artist, duration: (candidate["dt"] as? Double ?? 0) / 1000, lines: lines)
         }
@@ -154,13 +159,20 @@ enum WordSources {
                   let code = hit["isrc"] as? String, code.count == 12, code.allSatisfy({ $0.isLetter || $0.isNumber }),
                   let url = URL(string: "https://lrc.red/s/\(code).ttml"), let body = try? await data(url) else { continue }
             let lines = parseWordTTML(body)
-            guard validWordLines(lines, duration: song.duration) else { continue }
+            guard validSyncedLines(lines, duration: song.duration) else { continue }
             return WordLyricsResult(source: "lrc.red · TTML · \(code)", title: hit["title"] as? String ?? song.title, artist: song.artist, duration: hit["duration"] as? Double ?? song.duration, lines: lines)
         }
         return nil
     }
-    static func fetch(_ song: Track) async -> WordLyricsResult? {
-        await withTaskGroup(of: WordLyricsResult?.self) { group in
+    static func referenceLines(_ song: Track, bypass: Bool = false) async -> [LyricLine] {
+        guard let row = await LineSource.shared.get(song, bypass: bypass) else { return [] }
+        let timed = parseLRC(row.syncedLyrics ?? "")
+        return timed.isEmpty ? (row.plainLyrics ?? "").components(separatedBy: .newlines).map { LyricLine(time: 0, text: $0) } : timed
+    }
+    static func fetch(_ song: Track, filterHan: Bool = true, reference cached: [LyricLine] = [], onCandidate: (@MainActor @Sendable (WordLyricsResult) -> Void)? = nil) async -> WordLyricsResult? {
+        let reference = Task { cached.isEmpty ? await referenceLines(song) : cached }
+        defer { reference.cancel() }
+        return await withTaskGroup(of: WordLyricsResult?.self) { group in
             group.addTask { await amll(song) }
             group.addTask { await netease(song) }
             group.addTask { await lrcRed(song) }
@@ -168,9 +180,13 @@ enum WordSources {
             group.addTask { await kugou(song) }
             var best: WordLyricsResult?
             for await result in group {
-                guard let result else { continue }
-                if best == nil || result.coverage > best!.coverage { best = result }
-                if result.coverage >= 0.9 { group.cancelAll(); return result }
+                guard !Task.isCancelled else { group.cancelAll(); return nil }
+                guard let raw = result, let result = LyricsQuality.accepted(raw, reference: await reference.value, filterHan: filterHan) else { continue }
+                if best == nil || lyricRank(result.lines, duration: song.duration) > lyricRank(best!.lines, duration: song.duration) ||
+                   (lyricRank(result.lines, duration: song.duration) == lyricRank(best!.lines, duration: song.duration) && result.coverage > best!.coverage) {
+                    best = result
+                    if let onCandidate { await onCandidate(result) }
+                }
             }
             return best
         }
@@ -179,6 +195,7 @@ enum WordSources {
 
 func verifyWordSources() {
     verifyAdditionalSources()
+    verifyLyricsQuality()
     let yrc = parseYRC("[1000,5000](1000,300,0)Hola (4000,500,0)mundo\n[7000,1000](7000,1000,0)Sí")
     precondition(yrc.count == 2 && yrc[0].hasWords)
     precondition(yrc[0].words[0].end == 1.3 && yrc[0].words[1].start == 4)

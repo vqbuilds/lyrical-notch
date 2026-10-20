@@ -24,19 +24,28 @@ struct LyricChoice: Codable, Identifiable {
     func restoreSelectedLyrics(for song: Track) -> Bool {
         guard let raw = try? Data(contentsOf: selectedLyricsFile(for: song)),
               let choice = try? JSONDecoder().decode(LyricChoice.self, from: raw), choice.isUsable else { return false }
+        let review = choice.lines.isEmpty ? LyricsQuality.reviewPlain(choice.plain, filterHan: filterHanLyrics) : LyricsQuality.review(choice.lines, reference: cachedReference(song), filterHan: filterHanLyrics)
+        guard !review.suspicious else { return false }
         applySelectedLyrics(choice)
         return true
     }
     func applySelectedLyrics(_ choice: LyricChoice) {
-        request?.cancel(); wordRequest?.cancel(); usingSelectedLyrics = true
+        request?.cancel(); wordRequest?.cancel(); lyricRequestToken = UUID(); lyricsLoading = false; usingSelectedLyrics = true
         retryAfter = .distantFuture
-        lines = choice.lines; plain = choice.plain
+        let review = LyricsQuality.review(choice.lines, reference: track.map(cachedReference) ?? [], filterHan: filterHanLyrics)
+        lines = review.lines
+        plain = lines.isEmpty ? choice.plain.components(separatedBy: .newlines).filter { !filterHanLyrics || !LyricsQuality.hasHan($0) }.joined(separator: "\n") : lines.map(\.text).joined(separator: "\n")
+        qualityStatus = review.notes.joined(separator: " · ")
         wordSource = choice.source
         wordStatus = "\(choice.source) · \(choice.timing.lowercased()) · elección guardada para esta canción"
         message = "Letra elegida: \(choice.title) · \(choice.artist)"
     }
     func selectLyrics(_ choice: LyricChoice) {
         guard choice.isUsable, let song = track, !demo else { return }
+        let review = choice.lines.isEmpty ? LyricsQuality.reviewPlain(choice.plain, filterHan: filterHanLyrics) : LyricsQuality.review(choice.lines, reference: cachedReference(song), filterHan: filterHanLyrics)
+        guard !review.suspicious else { playbackError = "Esta versión tiene palabras pegadas o texto filtrado. Prueba otra fuente."; return }
+        providerRequest?.cancel(); providerToken = UUID(); choosingProvider = false
+        playbackError = nil
         applySelectedLyrics(choice)
         do {
             try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
@@ -67,7 +76,7 @@ struct LyricChoice: Codable, Identifiable {
         title = song?.title ?? ""; artist = song?.artist ?? ""; results = []
         message = "Busca versiones alternativas y revisa el comienzo antes de elegir."
     }
-    func search(_ playing: Track) {
+    func search(_ playing: Track, filterHan: Bool = true) {
         task?.cancel(); generation = UUID()
         let token = generation
         var query = playing
@@ -77,6 +86,8 @@ struct LyricChoice: Codable, Identifiable {
         guard !query.title.isEmpty else { message = "Escribe un título."; return }
         loading = true; results = []; message = "Buscando versiones en las fuentes disponibles…"
         task = Task {
+            let reference = Task { await WordSources.referenceLines(playing) }
+            defer { reference.cancel() }
             await withTaskGroup(of: [LyricChoice].self) { group in
                 group.addTask { await WordSources.qqMusic(query).map { [LyricChoice.words($0)] } ?? [] }
                 group.addTask { await WordSources.kugou(query).map { [LyricChoice.words($0)] } ?? [] }
@@ -99,7 +110,16 @@ struct LyricChoice: Codable, Identifiable {
                 }
                 for await choices in group {
                     guard !Task.isCancelled, generation == token else { group.cancelAll(); return }
-                    results.append(contentsOf: choices.filter(\.isUsable))
+                    let refs = await reference.value
+                    guard !Task.isCancelled, generation == token else { group.cancelAll(); return }
+                    let readable = choices.filter(\.isUsable).compactMap { choice -> LyricChoice? in
+                        let checked = LyricsQuality.review(choice.lines, reference: refs, filterHan: filterHan)
+                        guard !checked.suspicious, !choice.lines.isEmpty || !LyricsQuality.reviewPlain(choice.plain, filterHan: filterHan).suspicious else { return nil }
+                        var value = choice; value.lines = checked.lines
+                        value.plain = checked.lines.isEmpty ? choice.plain.components(separatedBy: .newlines).filter { !filterHan || !LyricsQuality.hasHan($0) }.joined(separator: "\n") : checked.lines.map(\.text).joined(separator: "\n")
+                        return value.lines.isEmpty && value.plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
+                    }
+                    results.append(contentsOf: readable)
                     results.sort { left, right in
                         let leftDistance = abs(left.duration - playing.duration)
                         let rightDistance = abs(right.duration - playing.duration)
@@ -126,7 +146,7 @@ struct LyricChoicesView: View {
             HStack {
                 TextField("Título", text: $search.title)
                 TextField("Artista", text: $search.artist)
-                Button("Buscar") { if let song = model.track { search.search(song) } }
+                Button("Buscar") { if let song = model.track { search.search(song, filterHan: model.filterHanLyrics) } }
                     .disabled(model.track == nil || model.demo || search.loading)
             }.textFieldStyle(.roundedBorder)
             HStack {

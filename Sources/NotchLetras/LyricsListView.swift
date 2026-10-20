@@ -19,6 +19,7 @@ struct LyricsListView: View {
     @ObservedObject var model: Model
     let embedded: Bool
     @StateObject private var follow = LyricsFollowState()
+    private var visible: Bool { embedded ? model.panelVisible : model.lyricsWindowVisible }
     var body: some View {
         ScrollViewReader { proxy in
             VStack(alignment: .leading, spacing: 6) {
@@ -48,12 +49,9 @@ struct LyricsListView: View {
                             } label: {
                                 Group {
                                     if index == model.currentIndex {
-                                        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: model.track?.playing != true)) { context in
-                                            KaraokeText(line: line,
-                                                nextTime: index + 1 < model.lines.count ? model.lines[index + 1].time : nil,
-                                                position: model.playbackPosition(at: context.date) + model.offset,
-                                                enabled: model.karaokeEnabled, tint: model.lyricColor)
-                                        }
+                                        AnimatedLyricLine(model: model, line: line,
+                                            visible: embedded ? model.panelVisible : model.lyricsWindowVisible,
+                                            size: embedded ? max(18, model.fontSize + 2) : 25)
                                     } else {
                                         Text(line.text.isEmpty ? "♪" : line.text)
                                             .foregroundStyle(model.lyricColor.opacity(index < (model.currentIndex ?? -1) ? 0.58 : 0.35))
@@ -76,7 +74,8 @@ struct LyricsListView: View {
                 }
                 .modifier(TrackLyricsScrolling(state: follow))
                 .onAppear { center(proxy) }
-                .onChange(of: model.currentIndex) { _, _ in if follow.following { center(proxy) } }
+                .onChange(of: model.currentIndex) { _, _ in if follow.following && visible { center(proxy) } }
+                .onChange(of: visible) { _, shown in if shown && follow.following { center(proxy) } }
                 .onChange(of: model.lines) { _, _ in center(proxy) }
                 .onChange(of: model.track?.key) { _, _ in follow.following = true; center(proxy) }
             }

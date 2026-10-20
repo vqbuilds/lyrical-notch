@@ -12,7 +12,7 @@ struct PlaybackProgressView: View {
     @ObservedObject var model: Model
     @StateObject private var scrub = ScrubState()
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.25)) { context in
+        TimelineView(.animation(minimumInterval: 1.0, paused: model.track?.playing != true || !model.panelVisible)) { context in
             let duration = max(1, model.track?.duration ?? 1)
             let current = min(duration, scrub.dragging ? scrub.value : model.playbackPosition(at: context.date))
             VStack(spacing: 0) {
