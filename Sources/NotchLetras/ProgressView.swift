@@ -12,9 +12,9 @@ struct PlaybackProgressView: View {
     @ObservedObject var model: Model
     @StateObject private var scrub = ScrubState()
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0, paused: model.track?.playing != true || !model.panelVisible)) { context in
+        TimelineView(.animation(minimumInterval: 1.0, paused: model.track?.playing != true || !model.panelVisible || model.awaitingPlaybackSample || model.suspended)) { _ in
             let duration = max(1, model.track?.duration ?? 1)
-            let current = min(duration, scrub.dragging ? scrub.value : model.playbackPosition(at: context.date))
+            let current = min(duration, scrub.dragging ? scrub.value : model.playbackPosition())
             VStack(spacing: 0) {
                 Slider(value: Binding(get: { current }, set: { scrub.value = $0 }), in: 0...duration, onEditingChanged: { editing in
                     if editing { scrub.value = current; scrub.dragging = true }

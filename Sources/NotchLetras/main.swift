@@ -105,8 +105,8 @@ struct LyricResponse: Codable {
     var position = 0.0 { didSet { if panelVisible || lyricsWindowVisible { updateLyricIndex() } } }
     @Published var currentIndex: Int?
     @Published var clockRevision = 0
-    @Published var panelVisible = false { didSet { if panelVisible { position = playbackPosition(at: Date()) } } }
-    @Published var lyricsWindowVisible = false { didSet { if lyricsWindowVisible { position = playbackPosition(at: Date()) } } }
+    @Published var panelVisible = false { didSet { if panelVisible { position = playbackPosition() } } }
+    @Published var lyricsWindowVisible = false { didSet { if lyricsWindowVisible { position = playbackPosition() } } }
     @Published var width: Double = UserDefaults.standard.object(forKey: "width") as? Double ?? 460 { didSet { save("width", width); layout?() } }
     @Published var compactHeight: Double = UserDefaults.standard.object(forKey: "compactHeight") as? Double ?? 34 { didSet { save("compactHeight", compactHeight); layout?() } }
     @Published var fontSize: Double = UserDefaults.standard.object(forKey: "font") as? Double ?? 17 { didSet { save("font", fontSize) } }
@@ -119,7 +119,11 @@ struct LyricResponse: Codable {
     var showSettings: (() -> Void)?
     var showLyrics: (() -> Void)?
     var timer: Timer?
-    var lastSample = Date()
+    var sampledUptime = ProcessInfo.processInfo.systemUptime
+    @Published var awaitingPlaybackSample = false
+    var lastTickDate: Date?
+    var lastTickUptime: TimeInterval?
+    var recoveryPollUntil: TimeInterval = 0
     var sampledPosition = 0.0
     var suspended = false
     var playbackEpoch = 0
@@ -139,19 +143,30 @@ struct LyricResponse: Codable {
         loadingOffset = false
     }
     func prepareForSleep() {
-        position = playbackPosition(at: Date()); sampledPosition = position
-        suspended = true; track?.playing = false; playbackEpoch += 1
+        position = playbackPosition(); sampledPosition = position
+        suspended = true; awaitingPlaybackSample = true; track?.playing = false; playbackEpoch += 1
+        clockRevision += 1
         timer?.invalidate()
         pollTask?.cancel(); polling = false
+        seekRequest?.cancel(); seekRequest = nil
         request?.cancel(); wordRequest?.cancel(); artworkRequest?.cancel(); providerRequest?.cancel()
+        lyricRequestToken = UUID(); lyricsLoading = false; refreshingLyrics = false
         providerToken = UUID(); choosingProvider = false
         pendingSeek = nil
         connectionStatus = "En reposo · reconectando al despertar"
     }
     func resumePlayback(reconnect: Bool = true) {
+        // A screen/session wake need not have a matching willSleep notification.
+        // Do not extrapolate the pre-wake anchor while the player is reconnecting.
         suspended = false; playbackEpoch += 1
+        awaitingPlaybackSample = !demo
         pollTask?.cancel(); polling = false
-        lastSample = Date()
+        seekRequest?.cancel(); seekRequest = nil; pendingSeek = nil
+        sampledUptime = ProcessInfo.processInfo.systemUptime
+        lastTickDate = nil; lastTickUptime = nil
+        recoveryPollUntil = sampledUptime + 3
+        nextPoll = .distantPast
+        clockRevision += 1
         connectionStatus = "Reconectando con el reproductor…"
         if !usingSelectedLyrics && !lines.contains(where: \.hasWords) { retryAfter = .distantPast }
         if reconnect { startClock(); poll() }
@@ -170,9 +185,19 @@ struct LyricResponse: Codable {
     let artworkCache = NSCache<NSString, NSImage>()
     var request: Task<Void, Never>?
     var cache: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("NotchLetras", isDirectory: true)
-    func playbackPosition(at date: Date) -> Double {
-        guard !suspended, track?.playing == true else { return sampledPosition }
-        return min(track?.duration ?? .infinity, sampledPosition + max(0, date.timeIntervalSince(lastSample)))
+    func playbackPosition(at uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Double {
+        guard !suspended, !awaitingPlaybackSample, track?.playing == true else { return sampledPosition }
+        // Wall-clock corrections must never move the karaoke clock.
+        return min(track?.duration ?? .infinity, sampledPosition + max(0, uptime - sampledUptime))
+    }
+    @discardableResult func recoverAfterClockGap(date: Date, uptime: TimeInterval, reconnect: Bool = true) -> Bool {
+        defer { lastTickDate = date; lastTickUptime = uptime }
+        guard !demo, !suspended, let previousDate = lastTickDate, let previousUptime = lastTickUptime else { return false }
+        let elapsed = uptime - previousUptime
+        let wallElapsed = date.timeIntervalSince(previousDate)
+        guard elapsed > 3 || elapsed < 0 || abs(wallElapsed - elapsed) > 0.5 else { return false }
+        resumePlayback(reconnect: reconnect)
+        return true
     }
     var karaokeStatus: String {
         lines.contains(where: \.hasWords) ? "Karaoke con tiempos por palabra" : "Sin tiempos por palabra: se muestra la frase completa, sin barrido"
@@ -239,24 +264,27 @@ struct LyricResponse: Codable {
     }
     func tick() {
         guard !suspended else { return }
+        recoverAfterClockGap(date: Date(), uptime: ProcessInfo.processInfo.systemUptime)
         updateHover?()
         if !demo, networkAvailable, Date() >= retryAfter, let track {
             retryAfter = .distantFuture
             fetch(track, bypass: true)
         }
-        if track?.playing == true { position = min(track?.duration ?? .infinity, sampledPosition + Date().timeIntervalSince(lastSample)) }
+        if track?.playing == true { position = playbackPosition() }
         if !demo, Date() >= nextPoll { poll() }
     }
     func poll() {
         guard !suspended, !demo, !polling, seekRequest == nil else { return }; polling = true
-        nextPoll = Date().addingTimeInterval(track?.playing == true ? 1.05 : (track == nil ? 5 : 2))
+        let recovering = ProcessInfo.processInfo.systemUptime < recoveryPollUntil
+        nextPoll = Date().addingTimeInterval(recovering ? 0.25 : (track?.playing == true ? 1.05 : (track == nil ? 5 : 2)))
         let pollGeneration = seekGeneration
         let epoch = playbackEpoch
         let selection = preferred
         pollTask = Task {
-            let result = await Task.detached { () -> (Track?, String?) in
+            let result = await Task.detached { () -> (Track?, String?, TimeInterval) in
                 let players = selection == "Auto" ? ["Spotify", "Music"] : [selection]
                 var paused: Track?
+                var capturedAt = ProcessInfo.processInfo.systemUptime
                 var errorMessage: String?
                 for player in players {
                     let id = player == "Spotify" ? "com.spotify.client" : "com.apple.Music"
@@ -282,17 +310,34 @@ struct LyricResponse: Codable {
                     }
                     guard value.numberOfItems == 8 else { continue }
                     let t = Track(title: value.atIndex(1)?.stringValue ?? "", artist: value.atIndex(2)?.stringValue ?? "", album: value.atIndex(3)?.stringValue ?? "", duration: value.atIndex(4)?.doubleValue ?? 0, position: value.atIndex(5)?.doubleValue ?? 0, playing: value.atIndex(6)?.booleanValue ?? false, player: player, artworkURL: value.atIndex(7)?.stringValue ?? "", spotifyID: (value.atIndex(8)?.stringValue ?? "").components(separatedBy: ":").last ?? "")
-                    if t.playing { return (t, nil) }; paused = t
+                    capturedAt = ProcessInfo.processInfo.systemUptime
+                    if t.playing { return (t, nil, capturedAt) }; paused = t
                 }
-                return (paused, errorMessage)
+                return (paused, errorMessage, capturedAt)
             }.value
             guard !Task.isCancelled, epoch == playbackEpoch, !suspended, !demo else { return }
             polling = false
             guard pollGeneration == seekGeneration else { return }
-            acceptPlayback(result.0, error: result.1, sampleIsCurrent: pollGeneration == seekGeneration)
+            if !acceptPlayback(result.0, error: result.1, capturedAt: result.2) { nextPoll = .distantPast }
         }
     }
-    func acceptPlayback(_ incoming: Track?, error: String?, sampleIsCurrent: Bool = true) {
+    @discardableResult func acceptPlayback(_ incoming: Track?, error: String?, sampleIsCurrent: Bool = true, capturedAt: TimeInterval? = nil) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        let capturedAt = capturedAt ?? now
+        // A reply held while the main thread was asleep/busy must not re-anchor playback.
+        guard !suspended, capturedAt.isFinite, capturedAt <= now + 0.1, now - capturedAt <= 3 else { return false }
+        if awaitingPlaybackSample, incoming == nil, now < recoveryPollUntil {
+            connectionStatus = error ?? "Reconectando con el reproductor…"
+            return true // Preserve cached lyrics while Spotify is still waking up.
+        }
+        let previousPosition = playbackPosition(at: now)
+        let wasWaiting = awaitingPlaybackSample
+        if sampleIsCurrent {
+            sampledPosition = incoming?.position ?? 0
+            sampledUptime = capturedAt
+            let waiting = incoming == nil && wasWaiting
+            if awaitingPlaybackSample != waiting { awaitingPlaybackSample = waiting }
+        }
         let oldCover = track?.artworkURL
         let oldKey = track?.key
         // The interpolated clock is separate: a position sample must not invalidate every view.
@@ -303,8 +348,8 @@ struct LyricResponse: Codable {
         if connectionStatus != status { connectionStatus = status }
         if oldCover != incoming?.artworkURL || oldKey != incoming?.key { loadArtwork() }
         if sampleIsCurrent {
-            if let incoming, abs(playbackPosition(at: Date()) - incoming.position) > 0.3 { clockRevision += 1 }
-            sampledPosition = incoming?.position ?? 0; position = sampledPosition; lastSample = Date()
+            position = playbackPosition(at: now)
+            if wasWaiting || abs(previousPosition - position) > 0.3 { clockRevision += 1 }
         }
         if oldKey != incoming?.key {
             playbackError = nil; usingSelectedLyrics = false
@@ -322,6 +367,7 @@ struct LyricResponse: Codable {
         }
         if incoming == nil { message = error ?? "Abre Spotify o Música y reproduce una canción" }
         layout?()
+        return true
     }
     func loadArtwork() {
         artworkRequest?.cancel()
@@ -452,12 +498,13 @@ struct LyricResponse: Codable {
         guard !suspended, let song = track, demo || ["Spotify", "Music"].contains(song.player), let target = lyricSeekPosition(time: time, offset: 0, duration: song.duration) else { return }
         seekGeneration += 1
         playbackError = nil
-        sampledPosition = target; position = target; lastSample = Date()
+        sampledPosition = target; position = target; sampledUptime = ProcessInfo.processInfo.systemUptime
         if demo { track?.position = target; return }
         pendingSeek = (song, target)
         guard seekRequest == nil else { return }
+        let operationEpoch = playbackEpoch
         seekRequest = Task {
-            while let (song, target) = pendingSeek {
+            while !Task.isCancelled, operationEpoch == playbackEpoch, let (song, target) = pendingSeek {
                 pendingSeek = nil
                 let generation = seekGeneration
                 let seekEpoch = playbackEpoch
@@ -469,15 +516,17 @@ struct LyricResponse: Codable {
                     let value = NSAppleScript(source: script)?.executeAndReturnError(&error)
                     return (error == nil ? value?.doubleValue : nil, error?[NSAppleScript.errorMessage] as? String)
                 }.value
+                guard operationEpoch == playbackEpoch, !Task.isCancelled else { return }
                 guard seekEpoch == playbackEpoch, !suspended, track?.key == song.key, track?.player == song.player else { pendingSeek = nil; break }
                 if generation == seekGeneration {
                     if let actual = outcome.0 {
-                        sampledPosition = actual; position = actual; lastSample = Date(); track?.position = actual
+                        sampledPosition = actual; position = actual; sampledUptime = ProcessInfo.processInfo.systemUptime; track?.position = actual
                     } else {
                         playbackError = outcome.1 ?? "No se ha podido saltar a esa frase. Comprueba el permiso de Automatización."
                     }
                 }
             }
+            guard operationEpoch == playbackEpoch else { return }
             seekRequest = nil
             poll()
         }
@@ -511,7 +560,7 @@ struct LyricResponse: Codable {
             loadSongOffset()
             wordStatus = "Demostración sintética: no verifica sincronización con audio"
             message = "Demostración · frases de muestra, sin audio"
-            sampledPosition = 0; position = 0; lastSample = Date()
+            sampledPosition = 0; position = 0; sampledUptime = ProcessInfo.processInfo.systemUptime
         } else { track = nil; lines = []; loadSongOffset(); poll() }
         layout?()
     }
@@ -699,12 +748,37 @@ final class OverlayPanel: NSPanel {
         model.showLyricChoices = { [weak self] in self?.openLyricChoices() }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake), name: NSWorkspace.screensDidWakeNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake), name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(screenChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(playerChanged), name: Notification.Name("com.spotify.client.PlaybackStateChanged"), object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(playerChanged), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(playerChanged), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
         refreshScreens(); model.start()
-        if CommandLine.arguments.contains("--preview-cycle") {
+        if CommandLine.arguments.contains("--check-wake-recovery") {
+            Task { @MainActor in
+                await model.pollTask?.value
+                guard model.track != nil else { print("Wake check needs Spotify or Music open with a track."); exit(2) }
+                let center = NSWorkspace.shared.notificationCenter
+                for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+                    center.post(name: NSWorkspace.willSleepNotification, object: NSWorkspace.shared)
+                    precondition(model.suspended && model.awaitingPlaybackSample)
+                    center.post(name: name, object: NSWorkspace.shared)
+                    precondition(!model.suspended && model.awaitingPlaybackSample)
+                    await model.pollTask?.value
+                    precondition(!model.awaitingPlaybackSample && model.track != nil)
+                    precondition(abs(model.playbackPosition() - model.sampledPosition) < 0.5)
+                    print("Live wake handler passed: \(name.rawValue), player=\(model.track!.player), position=\(model.sampledPosition)")
+                }
+                // Display-only wake, with no willSleep notification at all.
+                center.post(name: NSWorkspace.screensDidWakeNotification, object: NSWorkspace.shared)
+                precondition(model.awaitingPlaybackSample)
+                await model.pollTask?.value
+                precondition(!model.awaitingPlaybackSample)
+                print("Live wake checks passed; system sleep was simulated inside this process only. Playback was not paused or changed.")
+                NSApp.terminate(nil)
+            }
+        } else if CommandLine.arguments.contains("--preview-cycle") {
             model.toggleDemo(); model.updateHover = nil
             Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
                 Task { @MainActor in
@@ -859,15 +933,15 @@ if CommandLine.arguments.contains("--self-test") {
     MainActor.assumeIsolated {
         let model = Model()
         model.track = Track(title: "Timing check", artist: "", album: "", duration: 120, position: 10, playing: true, player: "Demo")
-        model.lastSample = Date(timeIntervalSinceReferenceDate: 100)
+        model.sampledUptime = 100
         model.sampledPosition = 10
-        precondition(model.playbackPosition(at: Date(timeIntervalSinceReferenceDate: 102)) == 12)
+        precondition(model.playbackPosition(at: 102) == 12)
         model.track?.playing = false
-        precondition(model.playbackPosition(at: Date(timeIntervalSinceReferenceDate: 110)) == 10)
+        precondition(model.playbackPosition(at: 110) == 10)
         model.sampledPosition = 60
-        precondition(model.playbackPosition(at: Date(timeIntervalSinceReferenceDate: 110)) == 60)
+        precondition(model.playbackPosition(at: 110) == 60)
         model.track?.playing = true
-        precondition(model.playbackPosition(at: Date(timeIntervalSinceReferenceDate: 170)) == 120)
+        precondition(model.playbackPosition(at: 170) == 120)
         precondition(lyricSeekPosition(time: 45, offset: 2, duration: 120) == 43)
         precondition(lyricSeekPosition(time: 1, offset: 2, duration: 120) == 0)
         precondition(lyricSeekPosition(time: 150, offset: -2, duration: 120) == 120)

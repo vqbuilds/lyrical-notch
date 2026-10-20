@@ -18,8 +18,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIdentifier</key><string>local.notchletras.personal</string>
 <key>CFBundleName</key><string>Notch Letras</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.5.1</string>
-<key>CFBundleVersion</key><string>8</string>
+<key>CFBundleShortVersionString</key><string>0.5.2</string>
+<key>CFBundleVersion</key><string>9</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSAppleEventsUsageDescription</key><string>Notch Letras necesita leer la canción y su posición y controlar Spotify o Música para mostrar las letras sincronizadas.</string>
@@ -28,5 +28,5 @@ PLIST
 codesign --force --sign - "$APP"
 "$APP/Contents/MacOS/NotchLetras" --self-test
 mkdir -p dist
-ditto -c -k --keepParent "$APP" dist/Notch-Letras-0.5.1-macos.zip
+ditto -c -k --keepParent "$APP" dist/Notch-Letras-0.5.2-macos.zip
 print "App creada: $APP"

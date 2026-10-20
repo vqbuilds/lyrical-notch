@@ -13,9 +13,9 @@ struct NativeKaraoke: NSViewRepresentable {
     func makeNSView(context: Context) -> KaraokeDrawingView { KaraokeDrawingView() }
     func updateNSView(_ view: KaraokeDrawingView, context: Context) {
         view.configure(line: line, size: fontSize, color: NSColor(model.lyricColor), centered: centered,
-                       running: visible && model.track?.playing == true, clock: { [weak model] in
+                       running: visible && !model.suspended && !model.awaitingPlaybackSample && model.track?.playing == true, clock: { [weak model] in
                            guard let model else { return 0 }
-                           return model.playbackPosition(at: Date()) + model.offset
+                           return model.playbackPosition() + model.offset
                        })
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: KaraokeDrawingView, context: Context) -> CGSize? {

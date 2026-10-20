@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.2
+
+- Re-anchor playback after system, screen and session wake; freeze karaoke until a fresh player position arrives.
+- Use a monotonic playback clock and recover from missed wake notifications or wall-clock jumps.
+- Discard delayed playback replies and invalidate pending seeks across sleep; briefly resample while reconnecting.
+- Add regression checks for display-only wake and a read-only live player wake-handler check.
+
 ## 0.5.1
 
 - Fix vertically displaced karaoke highlighting by drawing base text and sung text with identical Core Text baselines.

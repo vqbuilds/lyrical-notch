@@ -1,4 +1,14 @@
-# Validación 0.5.1
+# Validación 0.5.2
+
+## Revisión 0.5.2 · 20 de octubre de 2026
+
+- Reproducida antes del cambio una regresión de reactivación sin aviso previo de reposo: el reloj avanzaba desde el ancla antigua antes de recibir posición nueva. La prueba ahora pasa.
+- Regresiones de reloj monotónico, espera de muestra nueva, respuesta retenida, reproductor temporalmente no disponible, ajuste de hora y salto largo sin aviso de reposo.
+- Comprobación en vivo con Spotify: los manejadores de despertar del sistema, pantalla y sesión, y despertar de pantalla sin reposo previo, recuperaron muestras nuevas. Avisos simulados solo en este proceso; sin pausar ni cambiar la reproducción.
+- Regresión de consumo: una muestra normal de posición no publica cambios globales de la interfaz.
+- Karaoke y controles inspeccionados en la app instalada con «Ten Tonne Skeleton» de Royal Blood.
+- Crossfade, Automix y desfases por canción conservados.
+- El reposo físico y la sincronía contra audio tras cerrar/abrir la tapa necesitan validación en uso real; no equivalen a la simulación de notificaciones.
 
 ## Revisión 0.5.1 · 20 de octubre de 2026
 

@@ -41,17 +41,67 @@ import Combine
     precondition(model.lyricsTimingLabel == "Sin letra")
     song.playing = false; song.position = 24
     model.acceptPlayback(song, error: nil)
-    precondition(model.playbackPosition(at: Date().addingTimeInterval(50)) == 24)
+    precondition(model.playbackPosition(at: model.sampledUptime + 50) == 24)
     song.playing = true
     model.acceptPlayback(song, error: nil)
     model.prepareForSleep()
     let sleepPosition = model.position
-    precondition(model.playbackPosition(at: Date().addingTimeInterval(3600)) == sleepPosition)
+    precondition(model.playbackPosition(at: model.sampledUptime + 3600) == sleepPosition)
     model.resumePlayback(reconnect: false)
-    precondition(model.playbackPosition(at: Date().addingTimeInterval(3600)) == sleepPosition)
+    precondition(model.playbackPosition(at: model.sampledUptime + 3600) == sleepPosition)
     song.position = 73
     model.acceptPlayback(song, error: nil)
     precondition(model.position == 73 && !model.suspended)
+
+    let quietClock = Model()
+    quietClock.acceptPlayback(song, error: nil)
+    var clockPublications = 0
+    let clockObservation = quietClock.objectWillChange.sink { clockPublications += 1 }
+    quietClock.acceptPlayback(song, error: nil)
+    precondition(clockPublications == 0) // Normal position samples must not invalidate the whole UI.
+    clockObservation.cancel()
+
+    // Screen/session wake can arrive without a preceding system-sleep notification.
+    let screenWake = Model()
+    screenWake.track = song
+    screenWake.sampledPosition = 30
+    screenWake.resumePlayback(reconnect: false)
+    let waitingPosition = screenWake.playbackPosition(at: screenWake.sampledUptime + 1)
+    guard waitingPosition == 30 else {
+        print("Wake regression: lyrics advance from an old anchor before a fresh player sample (expected 30, received \(waitingPosition)).")
+        exit(1)
+    }
+
+    precondition(screenWake.awaitingPlaybackSample)
+    let wakeRevision = screenWake.clockRevision
+    let wakeEpoch = screenWake.playbackEpoch
+    // A response captured before a suspended queue resumed cannot unlock the clock.
+    precondition(!screenWake.acceptPlayback(song, error: nil, capturedAt: ProcessInfo.processInfo.systemUptime - 30))
+    precondition(screenWake.awaitingPlaybackSample && screenWake.sampledPosition == 30)
+    let originalKey = screenWake.track?.key
+    screenWake.acceptPlayback(nil, error: "Player still waking")
+    precondition(screenWake.track?.key == originalKey && screenWake.awaitingPlaybackSample)
+    var wakeSong = song
+    wakeSong.position = 42
+    screenWake.acceptPlayback(wakeSong, error: nil)
+    precondition(!screenWake.awaitingPlaybackSample && screenWake.position == 42)
+    precondition(screenWake.playbackPosition(at: screenWake.sampledUptime + 0.5) == 42.5)
+    precondition(screenWake.clockRevision > wakeRevision && screenWake.playbackEpoch == wakeEpoch)
+    // Ordinary ticks leave the epoch alone; clock corrections or missed wake events re-anchor.
+    let tickDate = Date(timeIntervalSinceReferenceDate: 100)
+    precondition(!screenWake.recoverAfterClockGap(date: tickDate, uptime: 100, reconnect: false))
+    precondition(!screenWake.recoverAfterClockGap(date: tickDate.addingTimeInterval(0.15), uptime: 100.15, reconnect: false))
+    precondition(screenWake.recoverAfterClockGap(date: tickDate.addingTimeInterval(1.30), uptime: 100.30, reconnect: false))
+    precondition(screenWake.awaitingPlaybackSample && screenWake.playbackPosition(at: 9000) == 42)
+    screenWake.acceptPlayback(wakeSong, error: nil)
+    precondition(screenWake.recoverAfterClockGap(date: tickDate.addingTimeInterval(3601.3), uptime: 100.3, reconnect: false))
+    precondition(screenWake.awaitingPlaybackSample && screenWake.playbackPosition(at: 9000) == 42)
+    screenWake.acceptPlayback(wakeSong, error: nil)
+    precondition(screenWake.recoverAfterClockGap(date: tickDate.addingTimeInterval(3611.3), uptime: 110.3, reconnect: false))
+    screenWake.acceptPlayback(wakeSong, error: nil)
+    precondition(!screenWake.awaitingPlaybackSample && screenWake.position == 42)
+    precondition(screenWake.offset == 0) // Recovery never invents a per-song timing correction.
+    print("Wake regression checks passed: display-only wake, stale reply rejection, temporary player unavailability, fresh-anchor recovery, wall-clock jumps and missed sleep notifications.")
 
     let choice = LyricChoice(id: "fixture", source: "Local test", title: song.title, artist: song.artist, duration: 120,
         lines: [LyricLine(time: 1, text: "Original fixture one"), LyricLine(time: 5, text: "Original fixture two")], plain: "Original fixture one\nOriginal fixture two")
