@@ -119,6 +119,26 @@ struct LyricResponse: Codable {
     var showSettings: (() -> Void)?
     var showLyrics: (() -> Void)?
     var timer: Timer?
+    var spotifyTransitionClock = SpotifyTransitionClock(learnedDelay: UserDefaults.standard.double(forKey: "spotifyTransitionDelay"))
+    @Published var spotifyTransitionCorrection = 0.0
+    @Published var compensateSpotifyTransitions = UserDefaults.standard.object(forKey: "compensateSpotifyTransitions") as? Bool ?? true {
+        didSet { save("compensateSpotifyTransitions", compensateSpotifyTransitions); clearTransitionCompensation() }
+    }
+    @Published var spotifyTransitionDelay = UserDefaults.standard.double(forKey: "spotifyTransitionDelay") {
+        didSet {
+            guard spotifyTransitionDelay.isFinite, (0...2).contains(spotifyTransitionDelay) else { return }
+            save("spotifyTransitionDelay", spotifyTransitionDelay)
+            spotifyTransitionClock.updateDelay(spotifyTransitionDelay)
+            if spotifyTransitionCorrection != spotifyTransitionClock.activeDelay {
+                spotifyTransitionCorrection = spotifyTransitionClock.activeDelay; clockRevision += 1; position = playbackPosition()
+            }
+        }
+    }
+    func clearTransitionCompensation(manualAction: Bool = false) {
+        if manualAction { spotifyTransitionClock.manualAction(at: ProcessInfo.processInfo.systemUptime) }
+        else { spotifyTransitionClock.reset() }
+        if spotifyTransitionCorrection != 0 { spotifyTransitionCorrection = 0; clockRevision += 1; position = playbackPosition() }
+    }
     var sampledUptime = ProcessInfo.processInfo.systemUptime
     @Published var awaitingPlaybackSample = false
     var lastTickDate: Date?
@@ -143,8 +163,11 @@ struct LyricResponse: Codable {
         loadingOffset = false
     }
     func prepareForSleep() {
-        position = playbackPosition(); sampledPosition = position
-        suspended = true; awaitingPlaybackSample = true; track?.playing = false; playbackEpoch += 1
+        let frozen = playbackPosition()
+        suspended = true
+        sampledPosition = frozen; sampledUptime = ProcessInfo.processInfo.systemUptime; position = frozen
+        clearTransitionCompensation()
+        awaitingPlaybackSample = true; track?.playing = false; playbackEpoch += 1
         clockRevision += 1
         timer?.invalidate()
         pollTask?.cancel(); polling = false
@@ -188,7 +211,7 @@ struct LyricResponse: Codable {
     func playbackPosition(at uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Double {
         guard !suspended, !awaitingPlaybackSample, track?.playing == true else { return sampledPosition }
         // Wall-clock corrections must never move the karaoke clock.
-        return min(track?.duration ?? .infinity, sampledPosition + max(0, uptime - sampledUptime))
+        return min(track?.duration ?? .infinity, max(0, sampledPosition + max(0, uptime - sampledUptime) - spotifyTransitionCorrection))
     }
     @discardableResult func recoverAfterClockGap(date: Date, uptime: TimeInterval, reconnect: Bool = true) -> Bool {
         defer { lastTickDate = date; lastTickUptime = uptime }
@@ -331,7 +354,16 @@ struct LyricResponse: Codable {
             return true // Preserve cached lyrics while Spotify is still waking up.
         }
         let previousPosition = playbackPosition(at: now)
+        let previousKey = track?.key
         let wasWaiting = awaitingPlaybackSample
+        if sampleIsCurrent, let incoming {
+            spotifyTransitionClock.accept(.init(key: incoming.key, player: incoming.player, album: incoming.album, duration: incoming.duration,
+                position: incoming.position, playing: incoming.playing, uptime: capturedAt), enabled: compensateSpotifyTransitions && !demo)
+            if spotifyTransitionClock.learnedDelay != spotifyTransitionDelay { spotifyTransitionDelay = spotifyTransitionClock.learnedDelay }
+            if spotifyTransitionCorrection != spotifyTransitionClock.activeDelay {
+                spotifyTransitionCorrection = spotifyTransitionClock.activeDelay; clockRevision += 1
+            }
+        } else if incoming == nil { clearTransitionCompensation() }
         if sampleIsCurrent {
             sampledPosition = incoming?.position ?? 0
             sampledUptime = capturedAt
@@ -366,6 +398,11 @@ struct LyricResponse: Codable {
             }
         }
         if incoming == nil { message = error ?? "Abre Spotify o Música y reproduce una canción" }
+        if playbackTracingEnabled {
+            tracePlayback("sample", ["title": incoming?.title ?? "", "trackID": incoming?.spotifyID ?? "", "playing": incoming?.playing ?? false,
+                "duration": incoming?.duration ?? 0, "album": incoming?.album ?? "", "reported": incoming?.position ?? 0, "clockBefore": previousPosition, "clockAfter": position,
+                "sampleAge": now - capturedAt, "offset": offset, "transitionCorrection": spotifyTransitionCorrection, "source": wordSource, "changedTrack": previousKey != incoming?.key])
+        }
         layout?()
         return true
     }
@@ -481,6 +518,7 @@ struct LyricResponse: Codable {
     }
     func control(_ command: String) {
         guard let player = track?.player, !demo else { return }
+        if command != "playpause" { clearTransitionCompensation(manualAction: true) }
         Task.detached { var error: NSDictionary?; _ = NSAppleScript(source: "tell application \"\(player)\" to \(command)")?.executeAndReturnError(&error) }
     }
     func openPlayer() {
@@ -496,6 +534,7 @@ struct LyricResponse: Codable {
     }
     func seek(toPosition time: Double) {
         guard !suspended, let song = track, demo || ["Spotify", "Music"].contains(song.player), let target = lyricSeekPosition(time: time, offset: 0, duration: song.duration) else { return }
+        clearTransitionCompensation(manualAction: true)
         seekGeneration += 1
         playbackError = nil
         sampledPosition = target; position = target; sampledUptime = ProcessInfo.processInfo.systemUptime
@@ -751,9 +790,9 @@ final class OverlayPanel: NSPanel {
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake), name: NSWorkspace.screensDidWakeNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake), name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(screenChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
-        DistributedNotificationCenter.default().addObserver(self, selector: #selector(playerChanged), name: Notification.Name("com.spotify.client.PlaybackStateChanged"), object: nil)
-        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(playerChanged), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
-        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(playerChanged), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
+        DistributedNotificationCenter.default().addObserver(self, selector: #selector(playerChanged(_:)), name: Notification.Name("com.spotify.client.PlaybackStateChanged"), object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(playerChanged(_:)), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(playerChanged(_:)), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
         refreshScreens(); model.start()
         if CommandLine.arguments.contains("--check-wake-recovery") {
             Task { @MainActor in
@@ -807,6 +846,8 @@ final class OverlayPanel: NSPanel {
         if CommandLine.arguments.contains("--preview-paused") { model.sampledPosition = 2.25; model.position = 2.25; model.track?.playing = false }
         if CommandLine.arguments.contains("--preview-pinned") { model.pinned = true; setExpanded(true) }
         if CommandLine.arguments.contains("--preview-hidden") { model.panelVisible = false; panel.orderOut(nil) }
+        if let flag = CommandLine.arguments.firstIndex(of: "--spotify-transition-delay"), CommandLine.arguments.count > flag + 1,
+           let delay = Double(CommandLine.arguments[flag+1]), delay.isFinite, (0...2).contains(delay) { model.spotifyTransitionDelay = delay }
         if CommandLine.arguments.contains("--enable-login") { let login = LoginItem(); login.setEnabled(true) }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -891,7 +932,16 @@ final class OverlayPanel: NSPanel {
         setExpanded(false)
         if panel.isKeyWindow { panel.resignKey() }
     }
-    @objc func playerChanged() { model.nextPoll = .distantPast; model.poll() }
+    @objc func playerChanged(_ notification: Notification) {
+        if playbackTracingEnabled {
+            var info: [String: Any] = [:]
+            for key in ["Playback Position", "Player State", "Track ID", "Duration", "Name"] {
+                if let value = notification.userInfo?[key] { info[key] = value }
+            }
+            tracePlayback("playerNotification", info)
+        }
+        model.nextPoll = .distantPast; model.poll()
+    }
     @objc func willSleep() { model.prepareForSleep() }
     @objc func didWake() { refreshScreens(); model.resumePlayback() }
     func applicationWillTerminate(_ notification: Notification) {
@@ -925,9 +975,13 @@ final class OverlayPanel: NSPanel {
     @objc func demo() { model.toggleDemo() }
     @objc func quit() { NSApp.terminate(nil) }
 }
-if CommandLine.arguments.contains("--self-test") {
+if let flag = CommandLine.arguments.firstIndex(of: "--replay-transitions"), CommandLine.arguments.count > flag + 1 {
+    do { try replaySpotifyTransitions(CommandLine.arguments[flag+1], delay: 1) }
+    catch { print("Transition replay failed: \(error.localizedDescription)"); exit(1) }
+} else if CommandLine.arguments.contains("--self-test") {
     MainActor.assumeIsolated { verifyNativeInkAlignment() }
     verifyKaraoke()
+    verifySpotifyTransitionClock()
     verifyWordSources()
     MainActor.assumeIsolated { verifyAppReliability() }
     MainActor.assumeIsolated {

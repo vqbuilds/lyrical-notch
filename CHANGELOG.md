@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.4
+
+- Compensate Spotify position drift following detected near-end automatic transitions, without changing Crossfade or issuing playback commands.
+- Learn transition delay from Spotify correcting its own position on pause; clear the transient compensation after pause, seek or manual app controls.
+- Add an adjustable transition delay and show active compensation in lyric diagnostics.
+- Add opt-in local playback tracing and regression checks for double corrections and manual skips.
+
 ## 0.5.3
 
 - Rename the app and project to Lyrical Notch, including windows, executable, build artifacts and documentation.

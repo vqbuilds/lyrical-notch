@@ -19,8 +19,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Lyrical Notch</string>
 <key>CFBundleDisplayName</key><string>Lyrical Notch</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.5.3</string>
-<key>CFBundleVersion</key><string>10</string>
+<key>CFBundleShortVersionString</key><string>0.5.4</string>
+<key>CFBundleVersion</key><string>11</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSAppleEventsUsageDescription</key><string>Lyrical Notch necesita leer la canción y su posición y controlar Spotify o Música para mostrar las letras sincronizadas.</string>
@@ -29,5 +29,5 @@ PLIST
 codesign --force --sign - "$APP"
 "$APP/Contents/MacOS/LyricalNotch" --self-test
 mkdir -p dist
-ditto -c -k --keepParent "$APP" dist/Lyrical-Notch-0.5.3-macos.zip
+ditto -c -k --keepParent "$APP" dist/Lyrical-Notch-0.5.4-macos.zip
 print "App creada: $APP"

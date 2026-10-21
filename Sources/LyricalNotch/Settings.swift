@@ -129,6 +129,13 @@ struct SettingsView: View {
             Picker("Reproductor", selection: $model.preferred) {
                 Text("Automático").tag("Auto"); Text("Spotify").tag("Spotify"); Text("Apple Music").tag("Music")
             }
+            Toggle("Compensar transiciones de Spotify", isOn: $model.compensateSpotifyTransitions)
+            if model.compensateSpotifyTransitions {
+                Slider(value: $model.spotifyTransitionDelay, in: 0...2, step: 0.1) {
+                    Text("Retraso de transición · \(String(format: "%.1f", model.spotifyTransitionDelay)) s")
+                }
+                Text("Se aplica al pasar automáticamente a otra canción. Se aprende cuando Spotify corrige su posición al pausar, y puedes ajustarlo aquí. No cambia Crossfade ni interrumpe la música.").font(.caption).foregroundStyle(.secondary)
+            }
             Text(model.connectionStatus).font(.caption).foregroundStyle(.secondary)
             if !model.networkAvailable { Text("Sin conexión de red · se conserva la letra disponible").font(.caption).foregroundStyle(.secondary) }
             Button(model.demo ? "Terminar demostración" : "Probar demostración") { model.toggleDemo() }

@@ -14,6 +14,7 @@ Una app nativa de macOS que lleva las letras y controles de Spotify o Música al
 - Ajuste de sincronía independiente por canción, letras alternativas con vista previa e importación local.
 - Ancho, alturas, tipografía, pantalla, háptica y visibilidad configurables.
 - Inicio de sesión opcional y recuperación del reproductor después del reposo.
+- Compensación configurable de transiciones automáticas de Spotify, manteniendo Crossfade activado.
 
 No incluye control de volumen, traducción ni reproducción desde navegador.
 
@@ -59,7 +60,7 @@ La dependencia Yams 6.2.2 está fijada en `Package.resolved`. Su licencia se inc
 ./scripts/package-source.sh
 ```
 
-Genera `dist/lyrical-notch-0.5.3-source.tar.gz` con una lista explícita de archivos publicables. No incluye investigación local, binarios de terceros, letras descargadas ni preferencias. La carpeta `research/` es solo local y se excluye también de Git.
+Genera `dist/lyrical-notch-0.5.4-source.tar.gz` con una lista explícita de archivos publicables. No incluye investigación local, binarios de terceros, letras descargadas ni preferencias. La carpeta `research/` es solo local y se excluye también de Git.
 
 Modos de desarrollo: `--self-test` ejecuta comprobaciones sin UI; `--preview-hover` abre una demo sintética desplegada; `--preview-player` mantiene el panel desplegado con el reproductor real; `--preview-cycle` alterna la expansión de la demo. La demo no reproduce audio ni demuestra precisión de una canción real. `--check-wake-recovery` comprueba los manejadores de despertar con un reproductor real abierto, simulando avisos solo dentro de este proceso, sin dormir el Mac ni cambiar la reproducción.
 
@@ -78,3 +79,5 @@ Por defecto se excluyen líneas con caracteres han, incluidos créditos o traduc
 El texto del karaoke se compone una vez por línea y ancho. Solo se actualiza el recorte de color mientras se canta, hasta 30 fps; pausa, ocultación y descansos vocales detienen esos repintados. El reloj no publica cambios de toda la interfaz en cada paso. Las búsquedas automáticas tienen un máximo de tres reintentos por canción. Medidas y límites: [docs/ENERGY.md](docs/ENERGY.md).
 
 La búsqueda automática comprueba las cinco fuentes de karaoke y LRCLIB en paralelo. Muestra cuanto antes una letra por frase y solo la sustituye por una versión con mejores tiempos. El aviso de ausencia se muestra al finalizar todas las consultas. La coincidencia usa canción, artista y duración; no exige el nombre exacto del álbum. Las consultas de LRCLIB para texto visible y referencias de espacios se comparten para evitar descargas duplicadas. Las letras válidas ya guardadas se reutilizan.
+
+La compensación de transiciones de Spotify está en Ajustes → General. Empieza en cero y aprende el retraso si Spotify corrige su posición al pausar tras una transición; también puede ajustarse manualmente. Se retira al pausar o saltar y no altera los tiempos de la letra ni pausa la reproducción por su cuenta. Se excluyen los cambios entre pistas del mismo álbum. Los saltos hechos desde Spotify muy cerca del final pueden confundirse con una transición automática. `--trace-playback` imprime un diagnóstico local de posición y metadatos en la consola; no envía registros.

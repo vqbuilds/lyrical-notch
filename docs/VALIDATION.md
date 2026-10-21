@@ -1,4 +1,14 @@
-# Validación 0.5.3
+# Validación 0.5.4
+
+## Revisión 0.5.4 · 21 de octubre de 2026
+
+- Registro local: tres pausas tras transiciones mostraron correcciones del reloj de Spotify de −0,958, −0,967 y −0,973 s. Antes de pausar, el reloj de la app seguía la posición recibida con diferencias del orden de milisegundos. Esto acredita un salto de la posición reportada; no es una medición directa de audio.
+- Compensación temporal, separada del desfase de letras por canción. Solo se aplica a cambios cerca del final, con calibración aprendida o configurada; el valor inicial es cero.
+- Pruebas de calibración al pausar, eliminación de doble compensación, salto manual, búsqueda de posición, modo desactivado, álbum consecutivo y Apple Music.
+- Reproducción del registro real por el controlador de producción: dos discontinuidades de −1,037 y −1,046 s quedan en −0,037 y −0,046 s; dos transiciones comprobadas sin emitir comandos al reproductor.
+- Calibración de este Mac configurada a 1,0 s a partir del registro; se retiró el −1,0 s provisional de «El Semental» para no sumar dos correcciones.
+- Esta validación es del reloj, no una nueva medición de la alineación vocal. La percepción de sincronía con canciones futuras necesita confirmación de uso.
+- Limitación: un salto externo efectuado justo al final puede parecer una transición automática. El valor es empírico y puede necesitar ajuste si cambia la configuración de Spotify.
 
 ## Revisión 0.5.3 · 20 de octubre de 2026
 
