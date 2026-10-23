@@ -43,9 +43,6 @@ struct LyricsDiagnosticsView: View {
             Text("Fuente: \(model.lyricsSourceLabel)").font(.headline)
             if model.lyricsLoading { Text("Comprobando todas las fuentes…").font(.caption).foregroundStyle(.secondary) }
             Text("Sincronización: \(model.lyricsTimingLabel)")
-            if model.spotifyTransitionCorrection > 0 {
-                Text("Compensación de transición: \(String(format: "%.1f", model.spotifyTransitionCorrection)) s").font(.caption)
-            }
             if !model.karaokeEnabled { Text("Relleno karaoke desactivado en Ajustes.").foregroundStyle(.secondary) }
             if !model.networkAvailable { Text("Sin conexión · se conserva la letra cargada.").foregroundStyle(.secondary) }
             Text(model.wordStatus).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

@@ -1,11 +1,9 @@
 # Changelog
 
-## 0.5.4
+## 0.5.5
 
-- Compensate Spotify position drift following detected near-end automatic transitions, without changing Crossfade or issuing playback commands.
-- Learn transition delay from Spotify correcting its own position on pause; clear the transient compensation after pause, seek or manual app controls.
-- Add an adjustable transition delay and show active compensation in lyric diagnostics.
-- Add opt-in local playback tracing and regression checks for double corrections and manual skips.
+- Revert the Spotify Crossfade compensation introduced in 0.5.4, including automatic calibration, settings and diagnostic tracing. Playback follows the player clock as in 0.5.3.
+- Preserve the Lyrical Notch name, sleep/wake recovery and earlier features.
 
 ## 0.5.3
 

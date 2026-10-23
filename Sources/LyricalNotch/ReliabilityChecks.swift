@@ -61,13 +61,6 @@ import Combine
     precondition(clockPublications == 0) // Normal position samples must not invalidate the whole UI.
     clockObservation.cancel()
 
-    let correctedSleep = Model()
-    correctedSleep.track = song; correctedSleep.sampledPosition = 40
-    correctedSleep.sampledUptime = ProcessInfo.processInfo.systemUptime - 1
-    correctedSleep.spotifyTransitionCorrection = 1
-    correctedSleep.prepareForSleep()
-    precondition(abs(correctedSleep.position - 40) < 0.05) // Do not add elapsed time twice while clearing a correction.
-
     // Screen/session wake can arrive without a preceding system-sleep notification.
     let screenWake = Model()
     screenWake.track = song
